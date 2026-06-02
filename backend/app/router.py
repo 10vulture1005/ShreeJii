@@ -13,6 +13,8 @@ from pymongo.database import Database
 from pymongo import ReturnDocument
 from bson import ObjectId
 import base64
+import io
+import qrcode
 
 from app.database import get_db
 from app.schemas import (
@@ -46,6 +48,27 @@ def restock_inventory(payload: RestockRequest, db: Database = Depends(get_db)):
     sku_id = generate_sku(payload.source_name, payload.clothing_type, payload.color)
     collection = db.products
 
+    # Check if product exists to avoid generating duplicate QR codes
+    existing_product = collection.find_one({"sku_id": sku_id})
+    qr_image_url = existing_product.get("qr_image_url") if existing_product else None
+
+    # If it's a new product and has no QR code, generate one
+    if not qr_image_url:
+        qr = qrcode.QRCode(version=1, box_size=10, border=4)
+        qr.add_data(sku_id)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
+        
+        img_byte_arr = io.BytesIO()
+        img.save(img_byte_arr, format='PNG')
+        
+        qr_result = db.images.insert_one({
+            "filename": f"{sku_id}_qr.png",
+            "content_type": "image/png",
+            "data": img_byte_arr.getvalue()
+        })
+        qr_image_url = f"/api/images/{qr_result.inserted_id}"
+
     # Atomically upsert the product and increment the stock count
     updated_product = collection.find_one_and_update(
         {"sku_id": sku_id},
@@ -57,6 +80,7 @@ def restock_inventory(payload: RestockRequest, db: Database = Depends(get_db)):
                 "color": payload.color,
                 "price": float(payload.price), # PyMongo works best with float
                 "image_url": payload.image_url,
+                "qr_image_url": qr_image_url,
             },
             "$inc": {"stock_count": payload.quantity_to_add}
         },
@@ -72,6 +96,7 @@ def restock_inventory(payload: RestockRequest, db: Database = Depends(get_db)):
         color=updated_product["color"],
         price=updated_product["price"],
         image_url=updated_product.get("image_url"),
+        qr_image_url=updated_product.get("qr_image_url"),
         stock_count=updated_product["stock_count"],
         message=f"Successfully restocked {payload.quantity_to_add} units. Total stock: {updated_product['stock_count']}",
     )
@@ -139,6 +164,7 @@ def get_products(db: Database = Depends(get_db)):
                 color=row["color"],
                 price=row["price"],
                 image_url=row.get("image_url"),
+                qr_image_url=row.get("qr_image_url"),
                 stock_count=row["stock_count"],
             )
             for row in results

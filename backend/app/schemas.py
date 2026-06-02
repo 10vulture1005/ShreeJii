@@ -30,7 +30,8 @@ class RestockResponse(BaseModel):
     clothing_type: str
     color: str
     price: Decimal
-    image_url: Optional[str]
+    image_url: Optional[str] = None
+    qr_image_url: Optional[str] = None
     stock_count: int
     message: str
 
@@ -46,7 +47,8 @@ class ProductOut(BaseModel):
     clothing_type: str
     color: str
     price: Decimal
-    image_url: Optional[str]
+    image_url: Optional[str] = None
+    qr_image_url: Optional[str] = None
     stock_count: int
 
 
