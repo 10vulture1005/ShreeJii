@@ -7,9 +7,12 @@ Endpoints:
     POST /api/checkout                 — Checkout with stock deduction
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi.responses import Response
 from pymongo.database import Database
 from pymongo import ReturnDocument
+from bson import ObjectId
+import base64
 
 from app.database import get_db
 from app.schemas import (
@@ -155,3 +158,34 @@ def checkout(payload: CheckoutRequest, db: Database = Depends(get_db)):
         remaining_stock=updated_product["stock_count"],
         message=f"Successfully purchased {payload.quantity_purchased} unit(s). Remaining: {updated_product['stock_count']}.",
     )
+
+
+# ── 4. Image Upload ─────────────────────────────────────────────
+
+import requests
+
+@router.post(
+    "/api/admin/upload-image",
+    summary="Upload image to Imgur",
+    tags=["Admin"],
+)
+def upload_image(file: UploadFile = File(...)):
+    """
+    Upload an image file to Imgur's anonymous API and return the URL.
+    """
+    try:
+        file_bytes = file.file.read()
+        headers = {"Authorization": "Client-ID e02c83c27e8eeab"}  # Standard public client ID for simple anonymous uploads
+        response = requests.post(
+            "https://api.imgur.com/3/image",
+            headers=headers,
+            files={"image": file_bytes}
+        )
+        response.raise_for_status()
+        data = response.json()
+        return {"image_url": data["data"]["link"]}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to upload image: {str(e)}"
+        )
