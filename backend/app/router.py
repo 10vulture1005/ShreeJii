@@ -19,6 +19,7 @@ from app.schemas import (
     RestockRequest, RestockResponse,
     ProductOut,
     CheckoutRequest, CheckoutResponse,
+    UpdateRequest, BulkCheckoutResponse,
 )
 from app.sku_utils import generate_sku
 
@@ -74,6 +75,43 @@ def restock_inventory(payload: RestockRequest, db: Database = Depends(get_db)):
         stock_count=updated_product["stock_count"],
         message=f"Successfully restocked {payload.quantity_to_add} units. Total stock: {updated_product['stock_count']}",
     )
+
+@router.put(
+    "/api/admin/inventory/product/{sku_id}",
+    response_model=ProductOut,
+    summary="Update basic product details",
+    tags=["Admin"],
+)
+def update_product(sku_id: str, payload: UpdateRequest, db: Database = Depends(get_db)):
+    """
+    Update the basic details of a product (name, price, image).
+    Changing SKU attributes (type, color) requires creating a new product.
+    """
+    collection = db.products
+    updated = collection.find_one_and_update(
+        {"sku_id": sku_id},
+        {"$set": {
+            "name": payload.name,
+            "price": float(payload.price),
+            "image_url": payload.image_url,
+        }},
+        return_document=ReturnDocument.AFTER
+    )
+    
+    if not updated:
+        raise HTTPException(status_code=404, detail="Product not found")
+        
+    return ProductOut(
+        sku_id=updated["sku_id"],
+        name=updated["name"],
+        source_name=updated["source_name"],
+        clothing_type=updated["clothing_type"],
+        color=updated["color"],
+        price=updated["price"],
+        image_url=updated.get("image_url"),
+        stock_count=updated["stock_count"],
+    )
+
 
 
 # ── 2. Client Catalog ───────────────────────────────────────────
@@ -162,6 +200,45 @@ def checkout(payload: CheckoutRequest, db: Database = Depends(get_db)):
         sku_id=payload.sku_id,
         remaining_stock=updated_product["stock_count"],
         message=f"Successfully purchased {payload.quantity_purchased} unit(s). Remaining: {updated_product['stock_count']}.",
+    )
+
+@router.post(
+    "/api/checkout/bulk",
+    response_model=BulkCheckoutResponse,
+    summary="Bulk checkout multiple items",
+    tags=["Checkout"],
+)
+def bulk_checkout(payloads: list[CheckoutRequest], db: Database = Depends(get_db)):
+    """
+    Process a checkout for an entire cart of items.
+    Deducts stock for each item safely.
+    """
+    collection = db.products
+    successful = []
+    failed = []
+    
+    for item in payloads:
+        updated = collection.find_one_and_update(
+            {
+                "sku_id": item.sku_id,
+                "stock_count": {"$gte": item.quantity_purchased}
+            },
+            {"$inc": {"stock_count": -item.quantity_purchased}},
+            return_document=ReturnDocument.AFTER
+        )
+        if updated:
+            successful.append(item.sku_id)
+        else:
+            failed.append(item.sku_id)
+            
+    message = f"Checkout complete. {len(successful)} succeeded, {len(failed)} failed."
+    if failed:
+        message += " Failed items may be out of stock."
+        
+    return BulkCheckoutResponse(
+        successful_skus=successful,
+        failed_skus=failed,
+        message=message
     )
 
 

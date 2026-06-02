@@ -65,3 +65,21 @@ class CheckoutResponse(BaseModel):
     sku_id: str
     remaining_stock: int
     message: str
+
+
+class BulkCheckoutResponse(BaseModel):
+    """Response after a bulk checkout operation."""
+    
+    successful_skus: list[str]
+    failed_skus: list[str]
+    message: str
+
+
+# ── Update Endpoint ──────────────────────────────────────────────
+
+class UpdateRequest(BaseModel):
+    """Payload for PUT /api/admin/inventory/product/{sku_id}"""
+    
+    name: str = Field(..., min_length=1)
+    price: Decimal = Field(..., gt=0)
+    image_url: Optional[str] = None
