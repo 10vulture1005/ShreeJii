@@ -162,30 +162,51 @@ def checkout(payload: CheckoutRequest, db: Database = Depends(get_db)):
 
 # ── 4. Image Upload ─────────────────────────────────────────────
 
-import requests
-
 @router.post(
     "/api/admin/upload-image",
-    summary="Upload image to Imgur",
+    summary="Upload image to database",
     tags=["Admin"],
 )
-def upload_image(file: UploadFile = File(...)):
+def upload_image(file: UploadFile = File(...), db: Database = Depends(get_db)):
     """
-    Upload an image file to Imgur's anonymous API and return the URL.
+    Upload an image file directly to MongoDB and return a local URL to access it.
     """
     try:
         file_bytes = file.file.read()
-        headers = {"Authorization": "Client-ID e02c83c27e8eeab"}  # Standard public client ID for simple anonymous uploads
-        response = requests.post(
-            "https://api.imgur.com/3/image",
-            headers=headers,
-            files={"image": file_bytes}
-        )
-        response.raise_for_status()
-        data = response.json()
-        return {"image_url": data["data"]["link"]}
+        
+        # Insert image into a new 'images' collection
+        result = db.images.insert_one({
+            "filename": file.filename,
+            "content_type": file.content_type,
+            "data": file_bytes
+        })
+        
+        # Return the public URL that points to our GET endpoint
+        image_id = str(result.inserted_id)
+        # Using a relative path so it works seamlessly whether on localhost or Render
+        return {"image_url": f"/api/images/{image_id}"}
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to upload image: {str(e)}"
         )
+
+@router.get(
+    "/api/images/{image_id}",
+    summary="Get image by ID",
+    tags=["Catalog"],
+)
+def get_image(image_id: str, db: Database = Depends(get_db)):
+    """
+    Serve an image stored in MongoDB.
+    """
+    try:
+        obj_id = ObjectId(image_id)
+    except:
+        raise HTTPException(status_code=400, detail="Invalid image ID")
+        
+    image_doc = db.images.find_one({"_id": obj_id})
+    if not image_doc:
+        raise HTTPException(status_code=404, detail="Image not found")
+        
+    return Response(content=image_doc["data"], media_type=image_doc["content_type"] or "image/jpeg")
