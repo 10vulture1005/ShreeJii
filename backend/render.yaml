@@ -5,15 +5,7 @@ services:
     buildCommand: "./build.sh"
     startCommand: "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
     envVars:
-      - key: DATABASE_URL
-        fromDatabase:
-          name: shreeji-db
-          property: connectionString
+      - key: MONGO_URI
+        sync: false
       - key: PYTHON_VERSION
         value: 3.10.0
-
-databases:
-  - name: shreeji-db
-    databaseName: shreeji_db
-    user: shreeji_user
-    plan: free

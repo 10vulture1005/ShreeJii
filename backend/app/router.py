@@ -7,13 +7,11 @@ Endpoints:
     POST /api/checkout                 — Checkout with stock deduction
 """
 
-from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
-from sqlalchemy import text
+from pymongo.database import Database
+from pymongo.return_document import ReturnDocument
 
 from app.database import get_db
-from app.models import Product, Inventory
 from app.schemas import (
     RestockRequest, RestockResponse,
     ProductOut,
@@ -33,58 +31,45 @@ router = APIRouter()
     summary="Restock inventory for a product",
     tags=["Admin"],
 )
-def restock_inventory(payload: RestockRequest, db: Session = Depends(get_db)):
+def restock_inventory(payload: RestockRequest, db: Database = Depends(get_db)):
     """
     Accept a bulk shipment and update inventory.
 
     - Generates a standardized SKU from source_name, clothing_type, and color.
-    - Creates the product record if it doesn't already exist.
-    - Increments the stock count (or creates the inventory record).
+    - Uses upsert and $inc to atomically create the product or increment stock.
     - Returns the updated product data with current stock balance.
     """
     sku_id = generate_sku(payload.source_name, payload.clothing_type, payload.color)
+    collection = db.products
 
-    # ── Upsert Product ──
-    product = db.query(Product).filter(Product.sku_id == sku_id).first()
-    if product is None:
-        product = Product(
-            sku_id=sku_id,
-            name=payload.name,
-            source_name=payload.source_name,
-            clothing_type=payload.clothing_type,
-            color=payload.color,
-            price=payload.price,
-            image_url=payload.image_url,
-        )
-        db.add(product)
-        db.flush()  # Ensure product exists before inventory FK
-
-    # ── Upsert Inventory ──
-    inventory = db.query(Inventory).filter(Inventory.sku_id == sku_id).first()
-    if inventory is None:
-        inventory = Inventory(
-            sku_id=sku_id,
-            stock_count=payload.quantity_to_add,
-        )
-        db.add(inventory)
-    else:
-        inventory.stock_count += payload.quantity_to_add
-        inventory.updated_at = datetime.now(timezone.utc)
-
-    db.commit()
-    db.refresh(product)
-    db.refresh(inventory)
+    # Atomically upsert the product and increment the stock count
+    updated_product = collection.find_one_and_update(
+        {"sku_id": sku_id},
+        {
+            "$setOnInsert": {
+                "name": payload.name,
+                "source_name": payload.source_name,
+                "clothing_type": payload.clothing_type,
+                "color": payload.color,
+                "price": float(payload.price), # PyMongo works best with float
+                "image_url": payload.image_url,
+            },
+            "$inc": {"stock_count": payload.quantity_to_add}
+        },
+        upsert=True,
+        return_document=ReturnDocument.AFTER
+    )
 
     return RestockResponse(
-        sku_id=product.sku_id,
-        name=product.name,
-        source_name=product.source_name,
-        clothing_type=product.clothing_type,
-        color=product.color,
-        price=product.price,
-        image_url=product.image_url,
-        stock_count=inventory.stock_count,
-        message=f"Successfully restocked {payload.quantity_to_add} units. Total stock: {inventory.stock_count}",
+        sku_id=updated_product["sku_id"],
+        name=updated_product["name"],
+        source_name=updated_product["source_name"],
+        clothing_type=updated_product["clothing_type"],
+        color=updated_product["color"],
+        price=updated_product["price"],
+        image_url=updated_product.get("image_url"),
+        stock_count=updated_product["stock_count"],
+        message=f"Successfully restocked {payload.quantity_to_add} units. Total stock: {updated_product['stock_count']}",
     )
 
 
@@ -96,39 +81,23 @@ def restock_inventory(payload: RestockRequest, db: Session = Depends(get_db)):
     summary="Get product catalog",
     tags=["Catalog"],
 )
-def get_products(db: Session = Depends(get_db)):
+def get_products(db: Database = Depends(get_db)):
     """
     Fetch all products that are currently in stock (stock_count > 0).
-
-    Uses an INNER JOIN between products and inventory to ensure
-    only stocked items are returned.
     """
-    results = (
-        db.query(
-            Product.sku_id,
-            Product.name,
-            Product.source_name,
-            Product.clothing_type,
-            Product.color,
-            Product.price,
-            Product.image_url,
-            Inventory.stock_count,
-        )
-        .join(Inventory, Product.sku_id == Inventory.sku_id)
-        .filter(Inventory.stock_count > 0)
-        .all()
-    )
+    collection = db.products
+    results = collection.find({"stock_count": {"$gt": 0}})
 
     return [
         ProductOut(
-            sku_id=row.sku_id,
-            name=row.name,
-            source_name=row.source_name,
-            clothing_type=row.clothing_type,
-            color=row.color,
-            price=row.price,
-            image_url=row.image_url,
-            stock_count=row.stock_count,
+            sku_id=row["sku_id"],
+            name=row["name"],
+            source_name=row["source_name"],
+            clothing_type=row["clothing_type"],
+            color=row["color"],
+            price=row["price"],
+            image_url=row.get("image_url"),
+            stock_count=row["stock_count"],
         )
         for row in results
     ]
@@ -142,47 +111,47 @@ def get_products(db: Session = Depends(get_db)):
     summary="Purchase products (deduct stock)",
     tags=["Checkout"],
 )
-def checkout(payload: CheckoutRequest, db: Session = Depends(get_db)):
+def checkout(payload: CheckoutRequest, db: Database = Depends(get_db)):
     """
     Process a purchase by atomically deducting stock.
 
-    Uses SELECT ... FOR UPDATE to acquire a row-level lock on the
-    inventory row, preventing race conditions during simultaneous
-    online/offline checkouts.
+    Uses MongoDB's find_one_and_update to safely deduct the requested quantity,
+    ensuring that the stock count never drops below 0 natively.
     """
-    # Row-level lock to prevent overselling
-    inventory = (
-        db.query(Inventory)
-        .filter(Inventory.sku_id == payload.sku_id)
-        .with_for_update()
-        .first()
+    collection = db.products
+
+    # Check existence and stock level in one atomic step
+    updated_product = collection.find_one_and_update(
+        {
+            "sku_id": payload.sku_id,
+            "stock_count": {"$gte": payload.quantity_purchased}
+        },
+        {
+            "$inc": {"stock_count": -payload.quantity_purchased}
+        },
+        return_document=ReturnDocument.AFTER
     )
 
-    if inventory is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Product with SKU '{payload.sku_id}' not found in inventory.",
-        )
-
-    if inventory.stock_count < payload.quantity_purchased:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                f"Insufficient stock for SKU '{payload.sku_id}'. "
-                f"Available: {inventory.stock_count}, "
-                f"Requested: {payload.quantity_purchased}."
-            ),
-        )
-
-    # Deduct stock
-    inventory.stock_count -= payload.quantity_purchased
-    inventory.updated_at = datetime.now(timezone.utc)
-
-    db.commit()
-    db.refresh(inventory)
+    if not updated_product:
+        # If no document was matched and updated, it's either out of stock or doesn't exist
+        product = collection.find_one({"sku_id": payload.sku_id})
+        if not product:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Product with SKU '{payload.sku_id}' not found in inventory.",
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Insufficient stock for SKU '{payload.sku_id}'. "
+                    f"Available: {product.get('stock_count', 0)}, "
+                    f"Requested: {payload.quantity_purchased}."
+                ),
+            )
 
     return CheckoutResponse(
         sku_id=payload.sku_id,
-        remaining_stock=inventory.stock_count,
-        message=f"Successfully purchased {payload.quantity_purchased} unit(s). Remaining: {inventory.stock_count}.",
+        remaining_stock=updated_product["stock_count"],
+        message=f"Successfully purchased {payload.quantity_purchased} unit(s). Remaining: {updated_product['stock_count']}.",
     )

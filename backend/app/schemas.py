@@ -34,8 +34,6 @@ class RestockResponse(BaseModel):
     stock_count: int
     message: str
 
-    model_config = {"from_attributes": True}
-
 
 # ── Catalog Endpoint ─────────────────────────────────────────────
 
@@ -50,8 +48,6 @@ class ProductOut(BaseModel):
     price: Decimal
     image_url: Optional[str]
     stock_count: int
-
-    model_config = {"from_attributes": True}
 
 
 # ── Checkout Endpoint ────────────────────────────────────────────
