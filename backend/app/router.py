@@ -88,22 +88,27 @@ def get_products(db: Database = Depends(get_db)):
     """
     Fetch all products that are currently in stock (stock_count > 0).
     """
-    collection = db.products
-    results = collection.find({"stock_count": {"$gt": 0}})
+    try:
+        collection = db.products
+        results = collection.find({"stock_count": {"$gt": 0}})
 
-    return [
-        ProductOut(
-            sku_id=row["sku_id"],
-            name=row["name"],
-            source_name=row["source_name"],
-            clothing_type=row["clothing_type"],
-            color=row["color"],
-            price=row["price"],
-            image_url=row.get("image_url"),
-            stock_count=row["stock_count"],
-        )
-        for row in results
-    ]
+        return [
+            ProductOut(
+                sku_id=row["sku_id"],
+                name=row["name"],
+                source_name=row["source_name"],
+                clothing_type=row["clothing_type"],
+                color=row["color"],
+                price=row["price"],
+                image_url=row.get("image_url"),
+                stock_count=row["stock_count"],
+            )
+            for row in results
+        ]
+    except Exception as e:
+        import traceback
+        from fastapi.responses import PlainTextResponse
+        return PlainTextResponse(content=traceback.format_exc(), status_code=500)
 
 
 # ── 3. Checkout Deductions ──────────────────────────────────────
