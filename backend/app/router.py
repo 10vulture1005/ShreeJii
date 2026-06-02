@@ -9,7 +9,7 @@ Endpoints:
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pymongo.database import Database
-from pymongo.return_document import ReturnDocument
+from pymongo import ReturnDocument
 
 from app.database import get_db
 from app.schemas import (
