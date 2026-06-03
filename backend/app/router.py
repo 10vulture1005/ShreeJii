@@ -501,22 +501,43 @@ def get_admin_stats(db: Database = Depends(get_db), admin_user: dict = Depends(g
     """
     sales = list(db.sales.find().sort("timestamp", -1))
     
-    total_revenue = sum(sale.get("total_amount", 0) for sale in sales)
+    def safe_float(val):
+        try:
+            return float(val) if val is not None else 0.0
+        except (ValueError, TypeError):
+            return 0.0
+
+    def safe_int(val):
+        try:
+            return int(val) if val is not None else 0
+        except (ValueError, TypeError):
+            return 0
+
+    total_revenue = sum(safe_float(sale.get("total_amount", 0)) for sale in sales)
     total_orders = len(sales)
-    items_sold = sum(sale.get("quantity", 0) for sale in sales)
+    items_sold = sum(safe_int(sale.get("quantity", 0)) for sale in sales)
     
     # Online vs Offline breakdown
     online_sales = [s for s in sales if s.get("source") == "web"]
     offline_sales = [s for s in sales if s.get("source") != "web"]
     
-    online_revenue = sum(s.get("total_amount", 0) for s in online_sales)
-    offline_revenue = sum(s.get("total_amount", 0) for s in offline_sales)
+    online_revenue = sum(safe_float(s.get("total_amount", 0)) for s in online_sales)
+    offline_revenue = sum(safe_float(s.get("total_amount", 0)) for s in offline_sales)
     
     recent_sales = []
     for sale in sales[:10]:
         sale_dict = sale.copy()
         sale_dict["_id"] = str(sale_dict["_id"])
-        sale_dict["timestamp"] = sale_dict["timestamp"].isoformat()
+        
+        # Safely parse timestamp
+        ts = sale_dict.get("timestamp")
+        if isinstance(ts, datetime):
+            sale_dict["timestamp"] = ts.isoformat()
+        elif isinstance(ts, str):
+            sale_dict["timestamp"] = ts
+        else:
+            sale_dict["timestamp"] = None
+            
         # Ensure source field is present for frontend display
         sale_dict["source"] = sale_dict.get("source", "offline")
         recent_sales.append(sale_dict)
