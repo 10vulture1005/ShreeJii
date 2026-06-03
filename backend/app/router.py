@@ -13,6 +13,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from pymongo.database import Database
 from pymongo import ReturnDocument
 from bson import ObjectId
+from pydantic import BaseModel
 import base64
 import io
 import qrcode
