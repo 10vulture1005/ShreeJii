@@ -28,12 +28,25 @@ from app.schemas import (
     CheckoutRequest, CheckoutResponse,
     UpdateRequest, BulkCheckoutResponse,
     UserCreate, UserOut, Token, DashboardStats,
+    CreateOrderRequest, CreateOrderResponse,
+    VerifyPaymentRequest, VerifyPaymentResponse,
 )
 from app.sku_utils import generate_sku
 from app.auth_utils import verify_password, get_password_hash, create_access_token
 from app.auth_deps import get_current_user, get_admin_user
+import razorpay
+import hmac
+import hashlib
 
 router = APIRouter()
+
+# ── Razorpay Client ──────────────────────────────────────────────
+from dotenv import load_dotenv
+load_dotenv()
+
+RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID", "")
+RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET", "")
+razorpay_client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
 
 # ── 0. Auth & Users ─────────────────────────────────────────────
 
@@ -139,6 +152,7 @@ def restock_inventory(payload: RestockRequest, db: Database = Depends(get_db)):
                 "color": payload.color,
                 "price": float(payload.price), # PyMongo works best with float
                 "image_url": payload.image_url,
+                "image_urls": payload.image_urls or [],
                 "qr_image_url": qr_image_url,
                 "description": description,
             },
@@ -156,6 +170,7 @@ def restock_inventory(payload: RestockRequest, db: Database = Depends(get_db)):
         color=updated_product["color"],
         price=updated_product["price"],
         image_url=updated_product.get("image_url"),
+        image_urls=updated_product.get("image_urls", []),
         qr_image_url=updated_product.get("qr_image_url"),
         description=updated_product.get("description"),
         stock_count=updated_product["stock_count"],
@@ -181,6 +196,8 @@ def update_product(sku_id: str, payload: UpdateRequest, db: Database = Depends(g
     }
     if payload.image_url is not None:
         update_data["image_url"] = payload.image_url
+    if payload.image_urls is not None:
+        update_data["image_urls"] = payload.image_urls
     if payload.description is not None:
         update_data["description"] = payload.description
         
@@ -201,6 +218,7 @@ def update_product(sku_id: str, payload: UpdateRequest, db: Database = Depends(g
         color=updated["color"],
         price=updated["price"],
         image_url=updated.get("image_url"),
+        image_urls=updated.get("image_urls", []),
         description=updated.get("description"),
         stock_count=updated["stock_count"],
     )
@@ -261,6 +279,7 @@ def get_all_products(db: Database = Depends(get_db), admin_user: dict = Depends(
             color=row["color"],
             price=row["price"],
             image_url=row.get("image_url"),
+            image_urls=row.get("image_urls", []),
             qr_image_url=row.get("qr_image_url"),
             description=row.get("description"),
             stock_count=row["stock_count"],
@@ -293,6 +312,7 @@ def get_products(db: Database = Depends(get_db)):
                 color=row["color"],
                 price=row["price"],
                 image_url=row.get("image_url"),
+                image_urls=row.get("image_urls", []),
                 qr_image_url=row.get("qr_image_url"),
                 description=row.get("description"),
                 stock_count=row["stock_count"],
@@ -476,6 +496,7 @@ def get_image(image_id: str, db: Database = Depends(get_db)):
 def get_admin_stats(db: Database = Depends(get_db), admin_user: dict = Depends(get_admin_user)):
     """
     Returns total revenue, total orders, total items sold, and recent sales.
+    Includes online (web) vs offline (POS/app) breakdown.
     Requires Admin privileges.
     """
     sales = list(db.sales.find().sort("timestamp", -1))
@@ -484,16 +505,255 @@ def get_admin_stats(db: Database = Depends(get_db), admin_user: dict = Depends(g
     total_orders = len(sales)
     items_sold = sum(sale.get("quantity", 0) for sale in sales)
     
+    # Online vs Offline breakdown
+    online_sales = [s for s in sales if s.get("source") == "web"]
+    offline_sales = [s for s in sales if s.get("source") != "web"]
+    
+    online_revenue = sum(s.get("total_amount", 0) for s in online_sales)
+    offline_revenue = sum(s.get("total_amount", 0) for s in offline_sales)
+    
     recent_sales = []
-    for sale in sales[:5]:
+    for sale in sales[:10]:
         sale_dict = sale.copy()
         sale_dict["_id"] = str(sale_dict["_id"])
         sale_dict["timestamp"] = sale_dict["timestamp"].isoformat()
+        # Ensure source field is present for frontend display
+        sale_dict["source"] = sale_dict.get("source", "offline")
         recent_sales.append(sale_dict)
         
     return DashboardStats(
         total_revenue=total_revenue,
         total_orders=total_orders,
         items_sold=items_sold,
+        online_revenue=online_revenue,
+        offline_revenue=offline_revenue,
+        online_orders=len(online_sales),
+        offline_orders=len(offline_sales),
         recent_sales=recent_sales
+    )
+
+
+# ── 6. Razorpay Payment (Web Only) ──────────────────────────────
+
+@router.post(
+    "/api/payment/create-order",
+    response_model=CreateOrderResponse,
+    summary="Create a Razorpay order for web checkout",
+    tags=["Payment"],
+)
+def create_razorpay_order(payload: CreateOrderRequest, db: Database = Depends(get_db)):
+    """
+    Step 1 of the web payment flow:
+    - Validates stock availability for every item
+    - Calculates total amount (items + delivery charge)
+    - Creates a Razorpay order via their API
+    - Stores the order in the `orders` collection for later verification
+    """
+    if not RAZORPAY_KEY_ID or not RAZORPAY_KEY_SECRET:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Razorpay is not configured. Please set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET.",
+        )
+
+    collection = db.products
+
+    # Validate stock for each item
+    for item in payload.items:
+        product = collection.find_one({"sku_id": item.sku_id})
+        if not product:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Product with SKU '{item.sku_id}' not found.",
+            )
+        if product.get("stock_count", 0) < item.quantity:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Insufficient stock for '{product['name']}' (SKU: {item.sku_id}). "
+                    f"Available: {product.get('stock_count', 0)}, Requested: {item.quantity}."
+                ),
+            )
+
+    # Calculate total in paise (Razorpay expects amounts in smallest currency unit)
+    items_total = sum(float(item.price) * item.quantity for item in payload.items)
+    delivery = float(payload.delivery_charge)
+    total_paise = int(round((items_total + delivery) * 100))
+
+    # Create Razorpay order
+    try:
+        razorpay_order = razorpay_client.order.create({
+            "amount": total_paise,
+            "currency": "INR",
+            "payment_capture": 1,  # auto-capture payment
+        })
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to create Razorpay order: {str(e)}",
+        )
+
+    # Store order in MongoDB for verification later
+    order_doc = {
+        "razorpay_order_id": razorpay_order["id"],
+        "items": [
+            {
+                "sku_id": item.sku_id,
+                "quantity": item.quantity,
+                "price": float(item.price)
+            }
+            for item in payload.items
+        ],
+        "delivery_charge": delivery,
+        "amount_paise": total_paise,
+        "currency": "INR",
+        "status": "created",
+        "source": "web",
+        "created_at": datetime.utcnow(),
+    }
+    db.orders.insert_one(order_doc)
+
+    return CreateOrderResponse(
+        razorpay_order_id=razorpay_order["id"],
+        amount=total_paise,
+        currency="INR",
+        key_id=RAZORPAY_KEY_ID,
+    )
+
+
+@router.post(
+    "/api/payment/create-test-order",
+    response_model=CreateOrderResponse,
+    summary="Create a ₹1 test order for Razorpay integration testing",
+    tags=["Payment"],
+)
+def create_test_order(db: Database = Depends(get_db)):
+    if not RAZORPAY_KEY_ID or not RAZORPAY_KEY_SECRET:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Razorpay is not configured.",
+        )
+    
+    total_paise = 100 # Minimum ₹1
+
+    try:
+        razorpay_order = razorpay_client.order.create({
+            "amount": total_paise,
+            "currency": "INR",
+            "payment_capture": 1,
+        })
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to create Razorpay order: {str(e)}",
+        )
+
+    # Store order as a test order
+    order_doc = {
+        "razorpay_order_id": razorpay_order["id"],
+        "items": [],
+        "delivery_charge": 0,
+        "amount_paise": total_paise,
+        "currency": "INR",
+        "status": "created",
+        "source": "web_test",
+        "created_at": datetime.utcnow(),
+    }
+    db.orders.insert_one(order_doc)
+
+    return CreateOrderResponse(
+        razorpay_order_id=razorpay_order["id"],
+        amount=total_paise,
+        currency="INR",
+        key_id=RAZORPAY_KEY_ID,
+    )
+
+
+@router.post(
+    "/api/payment/verify",
+    response_model=VerifyPaymentResponse,
+    summary="Verify Razorpay payment and complete checkout",
+    tags=["Payment"],
+)
+def verify_razorpay_payment(payload: VerifyPaymentRequest, db: Database = Depends(get_db)):
+    """
+    Step 2 of the web payment flow:
+    - Verifies the Razorpay payment signature (HMAC SHA256)
+    - On success: deducts stock, records sales (same collection as POS),
+      and updates order status to "paid"
+    - This ensures admin dashboard stats include web orders automatically
+    """
+    # 1. Verify the payment signature
+    message = f"{payload.razorpay_order_id}|{payload.razorpay_payment_id}"
+    expected_signature = hmac.new(
+        RAZORPAY_KEY_SECRET.encode("utf-8"),
+        message.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+    if expected_signature != payload.razorpay_signature:
+        # Update order status to failed
+        db.orders.update_one(
+            {"razorpay_order_id": payload.razorpay_order_id},
+            {"$set": {"status": "failed", "updated_at": datetime.utcnow()}},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Payment verification failed. Invalid signature.",
+        )
+
+    # 2. Look up the order
+    order = db.orders.find_one({"razorpay_order_id": payload.razorpay_order_id})
+    if not order:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Order not found.",
+        )
+    if order.get("status") == "paid":
+        return VerifyPaymentResponse(
+            success=True,
+            message="Payment was already verified.",
+            order_id=payload.razorpay_order_id,
+        )
+
+    # 3. Deduct stock and record sales (same collection as app/POS)
+    collection = db.products
+    for item in order["items"]:
+        updated = collection.find_one_and_update(
+            {
+                "sku_id": item["sku_id"],
+                "stock_count": {"$gte": item["quantity"]},
+            },
+            {"$inc": {"stock_count": -item["quantity"]}},
+            return_document=ReturnDocument.AFTER,
+        )
+        if updated:
+            # Record sale — same format as POS/app sales for unified dashboard
+            db.sales.insert_one({
+                "sku_id": item["sku_id"],
+                "quantity": item["quantity"],
+                "price": float(item["price"]),
+                "total_amount": float(item["price"]) * item["quantity"],
+                "source": "web",
+                "razorpay_order_id": payload.razorpay_order_id,
+                "razorpay_payment_id": payload.razorpay_payment_id,
+                "timestamp": datetime.utcnow(),
+            })
+
+    # 4. Update order status to paid
+    db.orders.update_one(
+        {"razorpay_order_id": payload.razorpay_order_id},
+        {
+            "$set": {
+                "status": "paid",
+                "razorpay_payment_id": payload.razorpay_payment_id,
+                "razorpay_signature": payload.razorpay_signature,
+                "updated_at": datetime.utcnow(),
+            }
+        },
+    )
+
+    return VerifyPaymentResponse(
+        success=True,
+        message="Payment verified successfully. Your order has been placed!",
+        order_id=payload.razorpay_order_id,
     )

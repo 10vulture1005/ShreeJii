@@ -19,36 +19,49 @@ def generate_product_description(name: str, clothing_type: str, color: str, imag
         )
         
         if image_data_url:
-            prompt += " Please incorporate visual details from the provided image into the description to make it more accurate."
+            vision_prompt = prompt + " Please incorporate visual details from the provided image into the description to make it more accurate."
             messages = [
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": prompt},
+                        {"type": "text", "text": vision_prompt},
                         {"type": "image_url", "image_url": {"url": image_data_url}}
                     ]
                 }
             ]
-            model = "llama-3.2-11b-vision-preview"
-        else:
-            messages = [
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ]
-            model = "llama-3.3-70b-versatile"
             
+            try:
+                # Try the latest 17B Scout multimodal model
+                completion = client.chat.completions.create(
+                    model="meta-llama/llama-4-scout-17b-16e-instruct",
+                    messages=messages,
+                    temperature=0.7,
+                    max_tokens=150,
+                    top_p=1,
+                    stream=False,
+                    stop=None,
+                )
+                return completion.choices[0].message.content.strip()
+            except Exception as vision_e:
+                print(f"Vision model failed ({vision_e}), falling back to text-only...")
+
+        # Text-only fallback (or if no image is provided)
+        fallback_messages = [
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ]
+        
         completion = client.chat.completions.create(
-            model=model,
-            messages=messages,
+            model="openai/gpt-oss-120b",
+            messages=fallback_messages,
             temperature=0.7,
             max_tokens=150,
             top_p=1,
             stream=False,
             stop=None,
         )
-        
         return completion.choices[0].message.content.strip()
     except Exception as e:
         print(f"Error generating description with Groq: {e}")

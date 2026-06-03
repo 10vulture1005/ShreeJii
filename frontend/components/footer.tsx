@@ -15,23 +15,18 @@ export function Footer() {
             <h4 className="font-medium mb-4 text-foreground">Quick Links</h4>
             <ul className="space-y-2">
               <li>
-                <Link href="#" className="text-sm text-muted-foreground hover:text-primary transition-colors">
+                <Link href="/about" className="text-sm text-muted-foreground hover:text-primary transition-colors">
                   About Us
                 </Link>
               </li>
               <li>
-                <Link href="#" className="text-sm text-muted-foreground hover:text-primary transition-colors">
+                <Link href="/collections" className="text-sm text-muted-foreground hover:text-primary transition-colors">
                   Collections
                 </Link>
               </li>
               <li>
-                <Link href="#" className="text-sm text-muted-foreground hover:text-primary transition-colors">
+                <Link href="/contact" className="text-sm text-muted-foreground hover:text-primary transition-colors">
                   Contact
-                </Link>
-              </li>
-              <li>
-                <Link href="#" className="text-sm text-muted-foreground hover:text-primary transition-colors">
-                  FAQ
                 </Link>
               </li>
             </ul>
@@ -41,22 +36,22 @@ export function Footer() {
             <h4 className="font-medium mb-4 text-foreground">Policies</h4>
             <ul className="space-y-2">
               <li>
-                <Link href="#" className="text-sm text-muted-foreground hover:text-primary transition-colors">
+                <Link href="/policies/shipping-and-returns" className="text-sm text-muted-foreground hover:text-primary transition-colors">
                   Shipping & Returns
                 </Link>
               </li>
               <li>
-                <Link href="#" className="text-sm text-muted-foreground hover:text-primary transition-colors">
+                <Link href="/policies/privacy-policy" className="text-sm text-muted-foreground hover:text-primary transition-colors">
                   Privacy Policy
                 </Link>
               </li>
               <li>
-                <Link href="#" className="text-sm text-muted-foreground hover:text-primary transition-colors">
+                <Link href="/policies/terms-of-service" className="text-sm text-muted-foreground hover:text-primary transition-colors">
                   Terms of Service
                 </Link>
               </li>
               <li>
-                <Link href="#" className="text-sm text-muted-foreground hover:text-primary transition-colors">
+                <Link href="/size-guide" className="text-sm text-muted-foreground hover:text-primary transition-colors">
                   Size Guide
                 </Link>
               </li>
@@ -84,13 +79,13 @@ export function Footer() {
               </Link>
             </div>
             <p className="text-sm text-muted-foreground">
-              <a href="tel:+911234567890" className="hover:text-primary transition-colors">
-                +91 123 456 7890
+              <a href="tel:+917869739172" className="hover:text-primary transition-colors">
+                +91 78697 39172
               </a>
             </p>
             <p className="text-sm text-muted-foreground">
-              <a href="mailto:info@shreeji.com" className="hover:text-primary transition-colors">
-                info@shreeji.com
+              <a href="mailto:store@shreeji.com" className="hover:text-primary transition-colors">
+                store@shreeji.com
               </a>
             </p>
           </div>

@@ -29,6 +29,10 @@ class DashboardStats(BaseModel):
     total_revenue: Decimal
     total_orders: int
     items_sold: int
+    online_revenue: Decimal = Decimal("0")
+    offline_revenue: Decimal = Decimal("0")
+    online_orders: int = 0
+    offline_orders: int = 0
     recent_sales: list[dict] = []
 
 
@@ -44,6 +48,7 @@ class RestockRequest(BaseModel):
     price: Decimal = Field(..., gt=0, examples=[4500.00])
     quantity_to_add: int = Field(..., gt=0, examples=[25])
     image_url: Optional[str] = Field(None, examples=["https://example.com/saree.jpg"])
+    image_urls: Optional[list[str]] = Field(None, examples=[["https://example.com/saree1.jpg", "https://example.com/saree2.jpg"]])
 
 
 class RestockResponse(BaseModel):
@@ -56,6 +61,7 @@ class RestockResponse(BaseModel):
     color: str
     price: Decimal
     image_url: Optional[str] = None
+    image_urls: list[str] = []
     qr_image_url: Optional[str] = None
     description: Optional[str] = None
     stock_count: int
@@ -74,6 +80,7 @@ class ProductOut(BaseModel):
     color: str
     price: Decimal
     image_url: Optional[str] = None
+    image_urls: list[str] = []
     qr_image_url: Optional[str] = None
     description: Optional[str] = None
     stock_count: int
@@ -112,4 +119,42 @@ class UpdateRequest(BaseModel):
     name: str = Field(..., min_length=1)
     price: Decimal = Field(..., gt=0)
     image_url: Optional[str] = None
+    image_urls: Optional[list[str]] = None
     description: Optional[str] = None
+
+
+# ── Payment Endpoint ─────────────────────────────────────────────
+
+class OrderItem(BaseModel):
+    """A single item in a payment order."""
+    sku_id: str = Field(..., min_length=1)
+    quantity: int = Field(..., gt=0)
+    price: Decimal = Field(..., gt=0)
+
+
+class CreateOrderRequest(BaseModel):
+    """Payload for POST /api/payment/create-order"""
+    items: list[OrderItem]
+    delivery_charge: Decimal = Field(default=0, ge=0)
+
+
+class CreateOrderResponse(BaseModel):
+    """Response after creating a Razorpay order."""
+    razorpay_order_id: str
+    amount: int  # in paise
+    currency: str
+    key_id: str
+
+
+class VerifyPaymentRequest(BaseModel):
+    """Payload for POST /api/payment/verify"""
+    razorpay_order_id: str
+    razorpay_payment_id: str
+    razorpay_signature: str
+
+
+class VerifyPaymentResponse(BaseModel):
+    """Response after verifying a Razorpay payment."""
+    success: bool
+    message: str
+    order_id: Optional[str] = None

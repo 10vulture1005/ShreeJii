@@ -19,12 +19,15 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Database = Depends
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         email: str = payload.get("sub")
         if email is None:
+            print("Auth Error: token payload has no 'sub' (email)")
             raise credentials_exception
-    except jwt.PyJWTError:
+    except jwt.PyJWTError as e:
+        print(f"Auth Error: jwt.decode failed: {e}")
         raise credentials_exception
 
     user = db.users.find_one({"email": email})
     if user is None:
+        print(f"Auth Error: user not found in DB for email {email}")
         raise credentials_exception
         
     # convert _id to string as id

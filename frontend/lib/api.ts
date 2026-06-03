@@ -102,5 +102,42 @@ export const api = {
     })
     if (!res.ok) throw new Error("Failed to restock product")
     return res.json()
-  }
+  },
+
+  createRazorpayOrder: async (items: { sku_id: string; quantity: number; price: number }[], deliveryCharge: number) => {
+    const res = await fetch(`${API_URL}/api/payment/create-order`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items, delivery_charge: deliveryCharge }),
+    })
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({}))
+      throw new Error(errorData.detail || "Failed to create payment order")
+    }
+    return res.json()
+  },
+
+  createTestRazorpayOrder: async () => {
+    const res = await fetch(`${API_URL}/api/payment/create-test-order`, {
+      method: "POST",
+    })
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({}))
+      throw new Error(errorData.detail || "Failed to create test payment order")
+    }
+    return res.json()
+  },
+
+  verifyPayment: async (data: { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string }) => {
+    const res = await fetch(`${API_URL}/api/payment/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    })
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({}))
+      throw new Error(errorData.detail || "Payment verification failed")
+    }
+    return res.json()
+  },
 }

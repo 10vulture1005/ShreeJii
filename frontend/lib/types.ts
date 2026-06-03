@@ -6,6 +6,7 @@ export interface Product {
   color: string
   price: number
   image_url?: string | null
+  image_urls?: string[]
   qr_image_url?: string | null
   stock_count: number
   description?: string

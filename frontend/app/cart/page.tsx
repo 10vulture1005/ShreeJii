@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { useRouter } from "next/navigation"
 import { Header } from "@/components/header"
 import { Footer } from "@/components/footer"
 import { Button } from "@/components/ui/button"
@@ -11,10 +12,21 @@ import Link from "next/link"
 import { Minus, Plus, Trash2, ShoppingBag } from "lucide-react"
 import { api } from "@/lib/api"
 
+declare global {
+  interface Window {
+    Razorpay: any
+  }
+}
+
 export default function CartPage() {
   const { cart, updateQuantity, removeFromCart, getCartTotal, clearCart } = useCart()
   const [isCheckingOut, setIsCheckingOut] = useState(false)
   const [checkoutError, setCheckoutError] = useState<string | null>(null)
+  const router = useRouter()
+
+  const deliveryCharge = cart.length > 0 ? 99 : 0
+  const subtotal = getCartTotal()
+  const total = subtotal + deliveryCharge
 
   const handleCheckout = async () => {
     if (cart.length === 0) return
@@ -23,25 +35,111 @@ export default function CartPage() {
     setCheckoutError(null)
 
     try {
-      const payloads = cart.map((item) => ({
+      // Step 1: Create Razorpay order on backend
+      const items = cart.map((item) => ({
         sku_id: item.product.sku_id,
-        quantity_purchased: item.quantity,
+        quantity: item.quantity,
+        price: item.product.price,
       }))
 
-      const data = await api.bulkCheckout(payloads)
-      alert(data.message)
-      clearCart()
+      const orderData = await api.createRazorpayOrder(items, deliveryCharge)
+
+      // Step 2: Open Razorpay checkout modal
+      const options = {
+        key: orderData.key_id,
+        amount: orderData.amount,
+        currency: orderData.currency,
+        name: "Shree Ji",
+        description: "Purchase from Shree Ji",
+        order_id: orderData.razorpay_order_id,
+        handler: async (response: any) => {
+          try {
+            // Step 3: Verify payment on backend
+            await api.verifyPayment({
+              razorpay_order_id: response.razorpay_order_id,
+              razorpay_payment_id: response.razorpay_payment_id,
+              razorpay_signature: response.razorpay_signature,
+            })
+            clearCart()
+            router.push("/checkout-success")
+          } catch (verifyError: any) {
+            setCheckoutError(verifyError.message || "Payment verification failed. Please contact support.")
+          }
+        },
+        modal: {
+          ondismiss: () => {
+            setIsCheckingOut(false)
+          },
+        },
+        prefill: {},
+        theme: {
+          color: "#7c3aed",
+        },
+      }
+
+      const razorpay = new window.Razorpay(options)
+      razorpay.on("payment.failed", (response: any) => {
+        setCheckoutError(response.error?.description || "Payment failed. Please try again.")
+        setIsCheckingOut(false)
+      })
+      razorpay.open()
     } catch (error: any) {
       setCheckoutError(error.message)
-      alert(error.message)
-    } finally {
       setIsCheckingOut(false)
     }
   }
 
-  const deliveryCharge = cart.length > 0 ? 99 : 0
-  const subtotal = getCartTotal()
-  const total = subtotal + deliveryCharge
+  const handleTestCheckout = async () => {
+    setIsCheckingOut(true)
+    setCheckoutError(null)
+
+    try {
+      // Step 1: Create a ₹1 test order
+      const orderData = await api.createTestRazorpayOrder()
+
+      // Step 2: Open Razorpay checkout modal
+      const options = {
+        key: orderData.key_id,
+        amount: orderData.amount,
+        currency: orderData.currency,
+        name: "Shree Ji Test",
+        description: "Test Integration (₹1)",
+        order_id: orderData.razorpay_order_id,
+        handler: async (response: any) => {
+          try {
+            // Step 3: Verify payment on backend
+            await api.verifyPayment({
+              razorpay_order_id: response.razorpay_order_id,
+              razorpay_payment_id: response.razorpay_payment_id,
+              razorpay_signature: response.razorpay_signature,
+            })
+            router.push("/checkout-success")
+          } catch (verifyError: any) {
+            setCheckoutError(verifyError.message || "Test payment verification failed.")
+          }
+        },
+        modal: {
+          ondismiss: () => {
+            setIsCheckingOut(false)
+          },
+        },
+        prefill: {},
+        theme: {
+          color: "#7c3aed",
+        },
+      }
+
+      const razorpay = new window.Razorpay(options)
+      razorpay.on("payment.failed", (response: any) => {
+        setCheckoutError(response.error?.description || "Test payment failed.")
+        setIsCheckingOut(false)
+      })
+      razorpay.open()
+    } catch (error: any) {
+      setCheckoutError(error.message)
+      setIsCheckingOut(false)
+    }
+  }
 
   if (cart.length === 0) {
     return (
@@ -67,6 +165,11 @@ export default function CartPage() {
       <Header />
 
       <div className="container mx-auto px-4 py-24">
+        {checkoutError && (
+          <div className="mb-6 p-4 bg-destructive/10 border border-destructive/30 rounded-lg text-destructive text-sm">
+            {checkoutError}
+          </div>
+        )}
         <h1 className="text-4xl font-serif font-semibold text-foreground mb-8">Shopping Cart</h1>
 
         <div className="grid lg:grid-cols-3 gap-8">
@@ -179,6 +282,16 @@ export default function CartPage() {
                   disabled={isCheckingOut}
                 >
                   {isCheckingOut ? "Processing..." : "Proceed to Checkout"}
+                </Button>
+
+                <Button 
+                  variant="secondary"
+                  className="w-full mb-3" 
+                  size="lg"
+                  onClick={handleTestCheckout}
+                  disabled={isCheckingOut}
+                >
+                  Test Integration (₹1)
                 </Button>
 
                 <Link href="/contact">

@@ -136,9 +136,9 @@ export default function ContactPage() {
                       <div>
                         <h3 className="font-semibold text-foreground mb-1">Visit Our Boutique</h3>
                         <p className="text-sm text-muted-foreground">
-                          123 Fashion Street, Shopping District
+                          Shree Ji Biotique
                           <br />
-                          Mumbai, Maharashtra 400001
+                          Sarona, Raipur, Chhattisgarh
                         </p>
                       </div>
                     </CardContent>
@@ -152,7 +152,7 @@ export default function ContactPage() {
                       <div>
                         <h3 className="font-semibold text-foreground mb-1">Call Us</h3>
                         <p className="text-sm text-muted-foreground">
-                          +91 98765 43210
+                          +91 78697 39172
                           <br />
                           Mon-Sat: 10:00 AM - 8:00 PM
                         </p>
@@ -167,7 +167,7 @@ export default function ContactPage() {
                       </div>
                       <div>
                         <h3 className="font-semibold text-foreground mb-1">Email Us</h3>
-                        <p className="text-sm text-muted-foreground">contact@shreeji.com</p>
+                        <p className="text-sm text-muted-foreground">store@shreeji.com</p>
                       </div>
                     </CardContent>
                   </Card>

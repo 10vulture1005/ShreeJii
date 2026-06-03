@@ -5,6 +5,8 @@ import { Analytics } from "@vercel/analytics/next"
 import "./globals.css"
 import { CartProvider } from "@/contexts/cart-context"
 import { AuthProvider } from "@/contexts/auth-context"
+import { WishlistProvider } from "@/contexts/wishlist-context"
+import { Toaster } from "sonner"
 
 const _cormorant = Cormorant_Garamond({
   subsets: ["latin"],
@@ -44,10 +46,16 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
+      <head>
+        <script src="https://checkout.razorpay.com/v1/checkout.js" defer></script>
+      </head>
       <body className={`${_cormorant.variable} font-sans antialiased`}>
         <AuthProvider>
-          <CartProvider>{children}</CartProvider>
+          <WishlistProvider>
+            <CartProvider>{children}</CartProvider>
+          </WishlistProvider>
         </AuthProvider>
+        <Toaster />
         <Analytics />
       </body>
     </html>

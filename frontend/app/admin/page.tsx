@@ -6,7 +6,7 @@ import { useAuth } from "@/contexts/auth-context"
 import { Header } from "@/components/header"
 import { Footer } from "@/components/footer"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { IndianRupee, ShoppingBag, Package, Edit, Plus, RefreshCw, X, Sparkles } from "lucide-react"
+import { IndianRupee, ShoppingBag, Package, Edit, Plus, RefreshCw, X, Sparkles, Globe, Store } from "lucide-react"
 import { api } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -17,6 +17,10 @@ type DashboardStats = {
   total_revenue: number
   total_orders: number
   items_sold: number
+  online_revenue: number
+  offline_revenue: number
+  online_orders: number
+  offline_orders: number
   recent_sales: any[]
 }
 
@@ -33,12 +37,12 @@ export default function AdminPage() {
   const [isRestockModalOpen, setIsRestockModalOpen] = useState(false)
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
   const [editingProduct, setEditingProduct] = useState<Product | null>(null)
-  const [editForm, setEditForm] = useState({ name: "", price: 0, image_url: "", description: "" })
+  const [editForm, setEditForm] = useState({ name: "", price: 0, image_url: "", image_urls_text: "", description: "" })
   const [isGeneratingDesc, setIsGeneratingDesc] = useState(false)
   
   // Form states
   const [restockForm, setRestockForm] = useState({
-    source_name: "", clothing_type: "", color: "", name: "", price: "", quantity_to_add: "", image_url: ""
+    source_name: "", clothing_type: "", color: "", name: "", price: "", quantity_to_add: "", image_url: "", image_urls_text: ""
   })
   const [isSubmitting, setIsSubmitting] = useState(false)
 
@@ -78,6 +82,7 @@ export default function AdminPage() {
         name: editForm.name,
         price: Number(editForm.price),
         image_url: editForm.image_url || undefined,
+        image_urls: editForm.image_urls_text.split('\n').map(u => u.trim()).filter(Boolean),
         description: editForm.description || undefined
       })
       setIsEditModalOpen(false)
@@ -113,7 +118,8 @@ export default function AdminPage() {
         ...restockForm,
         price: Number(restockForm.price),
         quantity_to_add: Number(restockForm.quantity_to_add),
-        image_url: restockForm.image_url || undefined
+        image_url: restockForm.image_url || undefined,
+        image_urls: restockForm.image_urls_text.split('\n').map(u => u.trim()).filter(Boolean),
       })
       setIsRestockModalOpen(false)
       fetchData()
@@ -131,6 +137,7 @@ export default function AdminPage() {
       name: product.name,
       price: product.price,
       image_url: product.image_url || "",
+      image_urls_text: (product.image_urls || []).join('\n'),
       description: product.description || ""
     })
     setIsEditModalOpen(true)
@@ -145,11 +152,12 @@ export default function AdminPage() {
         name: product.name,
         price: product.price.toString(),
         quantity_to_add: "1",
-        image_url: product.image_url || ""
+        image_url: product.image_url || "",
+        image_urls_text: (product.image_urls || []).join('\n')
       })
     } else {
       setRestockForm({
-        source_name: "", clothing_type: "", color: "", name: "", price: "", quantity_to_add: "1", image_url: ""
+        source_name: "", clothing_type: "", color: "", name: "", price: "", quantity_to_add: "1", image_url: "", image_urls_text: ""
       })
     }
     setIsRestockModalOpen(true)
@@ -204,6 +212,30 @@ export default function AdminPage() {
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-bold">{stats?.items_sold || 0}</div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Online vs Offline Breakdown */}
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4 mb-12">
+          <Card className="border-blue-500/20 bg-blue-500/5">
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium text-blue-600">Online Revenue</CardTitle>
+              <Globe className="h-4 w-4 text-blue-500" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-blue-700">₹{stats?.online_revenue?.toLocaleString() || 0}</div>
+              <p className="text-xs text-muted-foreground mt-1">{stats?.online_orders || 0} orders via web</p>
+            </CardContent>
+          </Card>
+          <Card className="border-emerald-500/20 bg-emerald-500/5">
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium text-emerald-600">Offline Revenue</CardTitle>
+              <Store className="h-4 w-4 text-emerald-500" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-emerald-700">₹{stats?.offline_revenue?.toLocaleString() || 0}</div>
+              <p className="text-xs text-muted-foreground mt-1">{stats?.offline_orders || 0} orders in-store</p>
             </CardContent>
           </Card>
         </div>
@@ -271,7 +303,16 @@ export default function AdminPage() {
               {stats.recent_sales.map((sale: any) => (
                 <div key={sale._id} className="p-4 flex items-center justify-between hover:bg-muted/50 transition-colors">
                   <div>
-                    <p className="font-medium">SKU: {sale.sku_id}</p>
+                    <div className="flex items-center gap-2 mb-1">
+                      <p className="font-medium">SKU: {sale.sku_id}</p>
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide ${
+                        sale.source === "web" 
+                          ? "bg-blue-100 text-blue-700" 
+                          : "bg-emerald-100 text-emerald-700"
+                      }`}>
+                        {sale.source === "web" ? "Online" : "In-Store"}
+                      </span>
+                    </div>
                     <p className="text-sm text-muted-foreground">{new Date(sale.timestamp).toLocaleString()}</p>
                   </div>
                   <div className="text-right">
@@ -318,11 +359,21 @@ export default function AdminPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <label htmlFor="edit-image" className="text-sm font-medium">Image URL</label>
+                  <label htmlFor="edit-image" className="text-sm font-medium">Primary Image URL</label>
                   <Input 
                     id="edit-image" 
                     value={editForm.image_url} 
                     onChange={(e) => setEditForm({ ...editForm, image_url: e.target.value })} 
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label htmlFor="edit-images" className="text-sm font-medium">Additional Image URLs (one per line)</label>
+                  <textarea 
+                    id="edit-images" 
+                    className="flex min-h-[60px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    value={editForm.image_urls_text} 
+                    onChange={(e) => setEditForm({ ...editForm, image_urls_text: e.target.value })} 
+                    placeholder="https://...&#10;https://..."
                   />
                 </div>
                 <div className="space-y-2">
@@ -420,11 +471,19 @@ export default function AdminPage() {
                 />
               </div>
               <div>
-                <label className="text-sm font-medium">Image URL (optional)</label>
+                <label className="text-sm font-medium">Primary Image URL (optional)</label>
                 <input 
                   type="url" 
                   className="w-full p-2 mt-1 rounded-md border border-input bg-background"
                   value={restockForm.image_url} onChange={e => setRestockForm({...restockForm, image_url: e.target.value})} 
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium">Additional Image URLs (one per line)</label>
+                <textarea 
+                  className="w-full p-2 mt-1 min-h-[60px] rounded-md border border-input bg-background"
+                  value={restockForm.image_urls_text} onChange={e => setRestockForm({...restockForm, image_urls_text: e.target.value})} 
+                  placeholder="https://...&#10;https://..."
                 />
               </div>
               <div className="pt-4 flex justify-end gap-2">

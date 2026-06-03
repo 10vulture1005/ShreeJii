@@ -6,7 +6,7 @@ import type { CartItem, Product } from "@/lib/types"
 
 interface CartContextType {
   cart: CartItem[]
-  addToCart: (product: Product) => void
+  addToCart: (product: Product) => boolean
   removeFromCart: (sku_id: string) => void
   updateQuantity: (sku_id: string, quantity: number) => void
   clearCart: () => void
@@ -32,14 +32,19 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem("shreeji-cart", JSON.stringify(cart))
   }, [cart])
 
-  const addToCart = (product: Product) => {
+  const addToCart = (product: Product): boolean => {
+    let success = false
     setCart((prevCart) => {
       const existingItem = prevCart.find(
         (item) => item.product.sku_id === product.sku_id,
       )
 
       if (existingItem) {
-        if (existingItem.quantity >= product.stock_count) return prevCart; // Prevent adding more than stock
+        if (existingItem.quantity >= product.stock_count) {
+          success = false
+          return prevCart
+        }
+        success = true
         return prevCart.map((item) =>
           item.product.sku_id === product.sku_id
             ? { ...item, quantity: item.quantity + 1 }
@@ -47,9 +52,14 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         )
       }
 
-      if (product.stock_count <= 0) return prevCart; // Prevent adding out of stock
+      if (product.stock_count <= 0) {
+        success = false
+        return prevCart
+      }
+      success = true
       return [...prevCart, { product, quantity: 1 }]
     })
+    return success
   }
 
   const removeFromCart = (sku_id: string) => {
