@@ -91,10 +91,10 @@ export default function AdminPage() {
   }
 
   const handleGenerateDescription = async () => {
-    if (!editingProduct) return
+    if (!editingProduct || !token) return
     setIsGeneratingDesc(true)
     try {
-      const res = await api.generateDescription(editingProduct.sku_id)
+      const res = await api.generateDescription(token, editingProduct.sku_id)
       setEditForm({ ...editForm, description: res.description })
       toast.success("Description generated successfully!")
     } catch (error) {

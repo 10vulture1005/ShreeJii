@@ -111,7 +111,22 @@ def restock_inventory(payload: RestockRequest, db: Database = Depends(get_db)):
         qr_image_url = f"/api/images/{qr_result.inserted_id}"
         
         # Generate description with AI for new products
-        description = generate_product_description(payload.name, payload.clothing_type, payload.color)
+        image_data_url = None
+        if payload.image_url:
+            if payload.image_url.startswith("/api/images/"):
+                try:
+                    image_id = payload.image_url.split("/")[-1]
+                    image_doc = db.images.find_one({"_id": ObjectId(image_id)})
+                    if image_doc:
+                        b64 = base64.b64encode(image_doc["data"]).decode("utf-8")
+                        mime = image_doc["content_type"] or "image/jpeg"
+                        image_data_url = f"data:{mime};base64,{b64}"
+                except Exception as e:
+                    print(f"Failed to load internal image for AI generation: {e}")
+            else:
+                image_data_url = payload.image_url
+                
+        description = generate_product_description(payload.name, payload.clothing_type, payload.color, image_data_url)
 
     # Atomically upsert the product and increment the stock count
     updated_product = collection.find_one_and_update(
@@ -205,7 +220,23 @@ def generate_description_endpoint(sku_id: str, db: Database = Depends(get_db), a
     if not product:
         raise HTTPException(404, "Product not found")
         
-    desc = generate_product_description(product["name"], product["clothing_type"], product["color"])
+    image_url = product.get("image_url")
+    image_data_url = None
+    if image_url:
+        if image_url.startswith("/api/images/"):
+            try:
+                image_id = image_url.split("/")[-1]
+                image_doc = db.images.find_one({"_id": ObjectId(image_id)})
+                if image_doc:
+                    b64 = base64.b64encode(image_doc["data"]).decode("utf-8")
+                    mime = image_doc["content_type"] or "image/jpeg"
+                    image_data_url = f"data:{mime};base64,{b64}"
+            except Exception as e:
+                print(f"Failed to load internal image for AI generation: {e}")
+        else:
+            image_data_url = image_url
+
+    desc = generate_product_description(product["name"], product["clothing_type"], product["color"], image_data_url)
     collection.update_one({"sku_id": sku_id}, {"$set": {"description": desc}})
     return {"description": desc, "message": "Description generated successfully"}
 

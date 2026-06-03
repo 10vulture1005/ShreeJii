@@ -66,8 +66,7 @@ export const api = {
     return res.json()
   },
   
-  updateProduct: async (skuId: string, data: any) => {
-    const token = localStorage.getItem("admin_token")
+  updateProduct: async (token: string, skuId: string, data: any) => {
     if (!token) throw new Error("No token found")
     const res = await fetch(`${API_URL}/api/admin/inventory/product/${skuId}`, {
       method: "PUT",
@@ -80,8 +79,7 @@ export const api = {
     if (!res.ok) throw new Error("Failed to update product")
     return res.json()
   },
-  generateDescription: async (skuId: string) => {
-    const token = localStorage.getItem("admin_token")
+  generateDescription: async (token: string, skuId: string) => {
     if (!token) throw new Error("No token found")
     const res = await fetch(`${API_URL}/api/admin/inventory/product/${skuId}/generate-description`, {
       method: "POST",

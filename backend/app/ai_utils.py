@@ -1,7 +1,7 @@
 import os
 from groq import Groq
 
-def generate_product_description(name: str, clothing_type: str, color: str) -> str:
+def generate_product_description(name: str, clothing_type: str, color: str, image_data_url: str = None) -> str:
     """
     Generates a short e-commerce product description using Groq.
     """
@@ -18,16 +18,32 @@ def generate_product_description(name: str, clothing_type: str, color: str) -> s
             f"Do not include any greeting or conversational filler."
         )
         
-        completion = client.chat.completions.create(
-            model="llama3-8b-8192",
-            messages=[
+        if image_data_url:
+            prompt += " Please incorporate visual details from the provided image into the description to make it more accurate."
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": image_data_url}}
+                    ]
+                }
+            ]
+            model = "llama-3.2-11b-vision-preview"
+        else:
+            messages = [
                 {
                     "role": "user",
                     "content": prompt
                 }
-            ],
+            ]
+            model = "llama-3.3-70b-versatile"
+            
+        completion = client.chat.completions.create(
+            model=model,
+            messages=messages,
             temperature=0.7,
-            max_tokens=100,
+            max_tokens=150,
             top_p=1,
             stream=False,
             stop=None,
