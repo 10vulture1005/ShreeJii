@@ -6,6 +6,31 @@ from decimal import Decimal
 from typing import Optional
 from pydantic import BaseModel, Field
 
+# ── Auth & Users ─────────────────────────────────────────────────
+
+class UserCreate(BaseModel):
+    name: str = Field(..., min_length=1)
+    email: str = Field(..., min_length=5)
+    password: str = Field(..., min_length=6)
+
+class UserOut(BaseModel):
+    id: str
+    name: str
+    email: str
+    role: str
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+# ── Admin Dashboard ──────────────────────────────────────────────
+
+class DashboardStats(BaseModel):
+    total_revenue: Decimal
+    total_orders: int
+    items_sold: int
+    recent_sales: list[dict] = []
+
 
 # ── Restock Endpoint ─────────────────────────────────────────────
 
@@ -32,6 +57,7 @@ class RestockResponse(BaseModel):
     price: Decimal
     image_url: Optional[str] = None
     qr_image_url: Optional[str] = None
+    description: Optional[str] = None
     stock_count: int
     message: str
 
@@ -49,6 +75,7 @@ class ProductOut(BaseModel):
     price: Decimal
     image_url: Optional[str] = None
     qr_image_url: Optional[str] = None
+    description: Optional[str] = None
     stock_count: int
 
 
@@ -85,3 +112,4 @@ class UpdateRequest(BaseModel):
     name: str = Field(..., min_length=1)
     price: Decimal = Field(..., gt=0)
     image_url: Optional[str] = None
+    description: Optional[str] = None

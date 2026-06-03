@@ -9,12 +9,16 @@ Endpoints:
 
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from fastapi.responses import Response
+from fastapi.security import OAuth2PasswordRequestForm
 from pymongo.database import Database
 from pymongo import ReturnDocument
 from bson import ObjectId
 import base64
 import io
 import qrcode
+from datetime import datetime
+import os
+from app.ai_utils import generate_product_description
 
 from app.database import get_db
 from app.schemas import (
@@ -22,10 +26,45 @@ from app.schemas import (
     ProductOut,
     CheckoutRequest, CheckoutResponse,
     UpdateRequest, BulkCheckoutResponse,
+    UserCreate, UserOut, Token, DashboardStats,
 )
 from app.sku_utils import generate_sku
+from app.auth_utils import verify_password, get_password_hash, create_access_token
+from app.auth_deps import get_current_user, get_admin_user
 
 router = APIRouter()
+
+# ── 0. Auth & Users ─────────────────────────────────────────────
+
+@router.post("/api/auth/register", response_model=UserOut, tags=["Auth"])
+def register(user: UserCreate, db: Database = Depends(get_db)):
+    if db.users.find_one({"email": user.email}):
+        raise HTTPException(status_code=400, detail="Email already registered")
+    
+    user_dict = user.model_dump()
+    user_dict["password"] = get_password_hash(user_dict.pop("password"))
+    user_dict["role"] = "user"
+    
+    result = db.users.insert_one(user_dict)
+    user_dict["id"] = str(result.inserted_id)
+    return user_dict
+
+@router.post("/api/auth/login", response_model=Token, tags=["Auth"])
+def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Database = Depends(get_db)):
+    user = db.users.find_one({"email": form_data.username})
+    if not user or not verify_password(form_data.password, user["password"]):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    access_token = create_access_token(data={"sub": user["email"], "role": user["role"]})
+    return {"access_token": access_token, "token_type": "bearer"}
+
+@router.get("/api/auth/me", response_model=UserOut, tags=["Auth"])
+def read_users_me(current_user: dict = Depends(get_current_user)):
+    return current_user
 
 
 # ── 1. Inwarding & Restocking ───────────────────────────────────
@@ -51,9 +90,10 @@ def restock_inventory(payload: RestockRequest, db: Database = Depends(get_db)):
     # Check if product exists to avoid generating duplicate QR codes
     existing_product = collection.find_one({"sku_id": sku_id})
     qr_image_url = existing_product.get("qr_image_url") if existing_product else None
+    description = existing_product.get("description") if existing_product else None
 
     # If it's a new product and has no QR code, generate one
-    if not qr_image_url:
+    if not existing_product:
         qr = qrcode.QRCode(version=1, box_size=10, border=4)
         qr.add_data(sku_id)
         qr.make(fit=True)
@@ -68,6 +108,9 @@ def restock_inventory(payload: RestockRequest, db: Database = Depends(get_db)):
             "data": img_byte_arr.getvalue()
         })
         qr_image_url = f"/api/images/{qr_result.inserted_id}"
+        
+        # Generate description with AI for new products
+        description = generate_product_description(payload.name, payload.clothing_type, payload.color)
 
     # Atomically upsert the product and increment the stock count
     updated_product = collection.find_one_and_update(
@@ -81,6 +124,7 @@ def restock_inventory(payload: RestockRequest, db: Database = Depends(get_db)):
                 "price": float(payload.price), # PyMongo works best with float
                 "image_url": payload.image_url,
                 "qr_image_url": qr_image_url,
+                "description": description,
             },
             "$inc": {"stock_count": payload.quantity_to_add}
         },
@@ -97,6 +141,7 @@ def restock_inventory(payload: RestockRequest, db: Database = Depends(get_db)):
         price=updated_product["price"],
         image_url=updated_product.get("image_url"),
         qr_image_url=updated_product.get("qr_image_url"),
+        description=updated_product.get("description"),
         stock_count=updated_product["stock_count"],
         message=f"Successfully restocked {payload.quantity_to_add} units. Total stock: {updated_product['stock_count']}",
     )
@@ -113,13 +158,19 @@ def update_product(sku_id: str, payload: UpdateRequest, db: Database = Depends(g
     Changing SKU attributes (type, color) requires creating a new product.
     """
     collection = db.products
+    
+    update_data = {
+        "name": payload.name,
+        "price": float(payload.price),
+    }
+    if payload.image_url is not None:
+        update_data["image_url"] = payload.image_url
+    if payload.description is not None:
+        update_data["description"] = payload.description
+        
     updated = collection.find_one_and_update(
         {"sku_id": sku_id},
-        {"$set": {
-            "name": payload.name,
-            "price": float(payload.price),
-            "image_url": payload.image_url,
-        }},
+        {"$set": update_data},
         return_document=ReturnDocument.AFTER
     )
     
@@ -134,10 +185,56 @@ def update_product(sku_id: str, payload: UpdateRequest, db: Database = Depends(g
         color=updated["color"],
         price=updated["price"],
         image_url=updated.get("image_url"),
+        description=updated.get("description"),
         stock_count=updated["stock_count"],
     )
 
+class GenerateDescriptionResponse(BaseModel):
+    description: str
+    message: str
 
+@router.post(
+    "/api/admin/inventory/product/{sku_id}/generate-description",
+    response_model=GenerateDescriptionResponse,
+    tags=["Admin"],
+)
+def generate_description_endpoint(sku_id: str, db: Database = Depends(get_db), admin_user: dict = Depends(get_admin_user)):
+    collection = db.products
+    product = collection.find_one({"sku_id": sku_id})
+    if not product:
+        raise HTTPException(404, "Product not found")
+        
+    desc = generate_product_description(product["name"], product["clothing_type"], product["color"])
+    collection.update_one({"sku_id": sku_id}, {"$set": {"description": desc}})
+    return {"description": desc, "message": "Description generated successfully"}
+
+@router.get(
+    "/api/admin/inventory/products",
+    response_model=list[ProductOut],
+    summary="Get all products for admin",
+    tags=["Admin"],
+)
+def get_all_products(db: Database = Depends(get_db), admin_user: dict = Depends(get_admin_user)):
+    """
+    Fetch all products, including out of stock items. Requires Admin privileges.
+    """
+    collection = db.products
+    results = collection.find()
+    return [
+        ProductOut(
+            sku_id=row["sku_id"],
+            name=row["name"],
+            source_name=row["source_name"],
+            clothing_type=row["clothing_type"],
+            color=row["color"],
+            price=row["price"],
+            image_url=row.get("image_url"),
+            qr_image_url=row.get("qr_image_url"),
+            description=row.get("description"),
+            stock_count=row["stock_count"],
+        )
+        for row in results
+    ]
 
 # ── 2. Client Catalog ───────────────────────────────────────────
 
@@ -165,6 +262,7 @@ def get_products(db: Database = Depends(get_db)):
                 price=row["price"],
                 image_url=row.get("image_url"),
                 qr_image_url=row.get("qr_image_url"),
+                description=row.get("description"),
                 stock_count=row["stock_count"],
             )
             for row in results
@@ -222,6 +320,15 @@ def checkout(payload: CheckoutRequest, db: Database = Depends(get_db)):
                 ),
             )
 
+    # Record the sale
+    db.sales.insert_one({
+        "sku_id": payload.sku_id,
+        "quantity": payload.quantity_purchased,
+        "price": updated_product["price"],
+        "total_amount": float(updated_product["price"]) * payload.quantity_purchased,
+        "timestamp": datetime.utcnow()
+    })
+
     return CheckoutResponse(
         sku_id=payload.sku_id,
         remaining_stock=updated_product["stock_count"],
@@ -254,6 +361,13 @@ def bulk_checkout(payloads: list[CheckoutRequest], db: Database = Depends(get_db
         )
         if updated:
             successful.append(item.sku_id)
+            db.sales.insert_one({
+                "sku_id": item.sku_id,
+                "quantity": item.quantity_purchased,
+                "price": updated["price"],
+                "total_amount": float(updated["price"]) * item.quantity_purchased,
+                "timestamp": datetime.utcnow()
+            })
         else:
             failed.append(item.sku_id)
             
@@ -318,3 +432,36 @@ def get_image(image_id: str, db: Database = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Image not found")
         
     return Response(content=image_doc["data"], media_type=image_doc["content_type"] or "image/jpeg")
+
+# ── 5. Admin Dashboard ──────────────────────────────────────────
+
+@router.get(
+    "/api/admin/stats",
+    response_model=DashboardStats,
+    summary="Get admin dashboard statistics",
+    tags=["Admin"],
+)
+def get_admin_stats(db: Database = Depends(get_db), admin_user: dict = Depends(get_admin_user)):
+    """
+    Returns total revenue, total orders, total items sold, and recent sales.
+    Requires Admin privileges.
+    """
+    sales = list(db.sales.find().sort("timestamp", -1))
+    
+    total_revenue = sum(sale.get("total_amount", 0) for sale in sales)
+    total_orders = len(sales)
+    items_sold = sum(sale.get("quantity", 0) for sale in sales)
+    
+    recent_sales = []
+    for sale in sales[:5]:
+        sale_dict = sale.copy()
+        sale_dict["_id"] = str(sale_dict["_id"])
+        sale_dict["timestamp"] = sale_dict["timestamp"].isoformat()
+        recent_sales.append(sale_dict)
+        
+    return DashboardStats(
+        total_revenue=total_revenue,
+        total_orders=total_orders,
+        items_sold=items_sold,
+        recent_sales=recent_sales
+    )

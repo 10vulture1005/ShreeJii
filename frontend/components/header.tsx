@@ -4,10 +4,12 @@ import Link from "next/link"
 import { ShoppingBag, Menu, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useCart } from "@/contexts/cart-context"
+import { useAuth } from "@/contexts/auth-context"
 import { useState } from "react"
 
 export function Header() {
   const { getCartCount } = useCart()
+  const { user, logout } = useAuth()
   const cartCount = getCartCount()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
@@ -28,9 +30,23 @@ export function Header() {
           <Link href="/contact" className="text-sm text-foreground hover:text-primary transition-colors">
             Contact
           </Link>
+          {user?.role === "admin" && (
+            <Link href="/admin" className="text-sm font-semibold text-primary hover:text-primary/80 transition-colors">
+              Admin Panel
+            </Link>
+          )}
         </nav>
 
         <div className="flex items-center gap-4">
+          {user ? (
+            <Button variant="ghost" className="hidden md:inline-flex text-sm" onClick={() => logout()}>
+              Logout
+            </Button>
+          ) : (
+            <Link href="/login" className="hidden md:inline-flex">
+              <Button variant="ghost" className="text-sm">Sign In</Button>
+            </Link>
+          )}
           <Link href="/cart">
             <Button variant="ghost" size="icon" className="text-foreground relative">
               <ShoppingBag className="h-5 w-5" />
@@ -78,6 +94,34 @@ export function Header() {
             >
               Contact
             </Link>
+            {user?.role === "admin" && (
+              <Link
+                href="/admin"
+                className="text-sm font-semibold text-primary hover:text-primary/80 transition-colors"
+                onClick={() => setMobileMenuOpen(false)}
+              >
+                Admin Panel
+              </Link>
+            )}
+            {user ? (
+              <button
+                className="text-sm text-left text-foreground hover:text-primary transition-colors"
+                onClick={() => {
+                  logout()
+                  setMobileMenuOpen(false)
+                }}
+              >
+                Logout
+              </button>
+            ) : (
+              <Link
+                href="/login"
+                className="text-sm text-foreground hover:text-primary transition-colors"
+                onClick={() => setMobileMenuOpen(false)}
+              >
+                Sign In
+              </Link>
+            )}
           </div>
         </nav>
       )}

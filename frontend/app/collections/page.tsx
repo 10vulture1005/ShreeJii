@@ -4,8 +4,12 @@ import { Header } from "@/components/header"
 import { Footer } from "@/components/footer"
 import { ProductCard } from "@/components/product-card"
 import { Button } from "@/components/ui/button"
-import { products } from "@/lib/products-data"
-import { useState } from "react"
+import { api } from "@/lib/api"
+import { useState, useEffect } from "react"
+import type { Product } from "@/lib/types"
+
+import { Input } from "@/components/ui/input"
+import { Search } from "lucide-react"
 
 const categories = [
   { id: "all", label: "All" },
@@ -15,6 +19,7 @@ const categories = [
   { id: "festive", label: "Festive" },
   { id: "ethnic", label: "Ethnic Wear" },
   { id: "party-wear", label: "Party Wear" },
+  { id: "others", label: "Others" },
 ]
 
 const priceRanges = [
@@ -26,11 +31,35 @@ const priceRanges = [
 ]
 
 export default function CollectionsPage() {
+  const [searchQuery, setSearchQuery] = useState("")
   const [selectedCategory, setSelectedCategory] = useState("all")
   const [selectedPriceRange, setSelectedPriceRange] = useState("all")
+  const [products, setProducts] = useState<Product[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+
+  useEffect(() => {
+    api.getProducts()
+      .then((data) => {
+        setProducts(data)
+        setIsLoading(false)
+      })
+      .catch((err) => {
+        console.error("Failed to fetch products:", err)
+        setIsLoading(false)
+      })
+  }, [])
 
   const filteredProducts = products.filter((product) => {
-    const categoryMatch = selectedCategory === "all" || product.category === selectedCategory
+    const predefined = ["sarees", "indo-western", "bridal", "festive", "ethnic", "party-wear"]
+    let categoryMatch = false
+    
+    if (selectedCategory === "all") {
+      categoryMatch = true
+    } else if (selectedCategory === "others") {
+      categoryMatch = !predefined.includes(product.clothing_type)
+    } else {
+      categoryMatch = product.clothing_type === selectedCategory
+    }
 
     let priceMatch = true
     if (selectedPriceRange !== "all") {
@@ -40,7 +69,10 @@ export default function CollectionsPage() {
       }
     }
 
-    return categoryMatch && priceMatch
+    const searchMatch = product.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                        product.clothing_type.toLowerCase().includes(searchQuery.toLowerCase())
+
+    return categoryMatch && priceMatch && searchMatch
   })
 
   return (
@@ -64,6 +96,21 @@ export default function CollectionsPage() {
       <section className="py-8 border-b border-border">
         <div className="container mx-auto px-4">
           <div className="flex flex-col gap-6">
+            {/* Search Bar */}
+            <div>
+              <h3 className="text-sm font-semibold text-foreground mb-3">Search</h3>
+              <div className="relative max-w-md">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  type="search"
+                  placeholder="Search products..."
+                  className="pl-8 bg-background border-border"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+              </div>
+            </div>
+
             {/* Category Filter */}
             <div>
               <h3 className="text-sm font-semibold text-foreground mb-3">Category</h3>
@@ -121,10 +168,15 @@ export default function CollectionsPage() {
       {/* Products Grid */}
       <section className="py-16">
         <div className="container mx-auto px-4">
-          {filteredProducts.length > 0 ? (
+          {isLoading ? (
+            <div className="text-center py-16">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+              <p className="text-muted-foreground text-lg">Loading collection...</p>
+            </div>
+          ) : filteredProducts.length > 0 ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
               {filteredProducts.map((product) => (
-                <ProductCard key={product.id} product={product} />
+                <ProductCard key={product.sku_id} product={product} />
               ))}
             </div>
           ) : (
@@ -134,6 +186,7 @@ export default function CollectionsPage() {
                 onClick={() => {
                   setSelectedCategory("all")
                   setSelectedPriceRange("all")
+                  setSearchQuery("")
                 }}
               >
                 Clear Filters

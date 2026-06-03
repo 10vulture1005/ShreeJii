@@ -10,7 +10,21 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.router import router
+from app.database import db
+from app.auth_utils import get_password_hash
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Create admin user if it doesn't exist
+    admin_email = "admin@shreeji.com"
+    if not db.users.find_one({"email": admin_email}):
+        db.users.insert_one({
+            "name": "Admin",
+            "email": admin_email,
+            "password": get_password_hash("admin@123"),
+            "role": "admin"
+        })
+    yield
 
 app = FastAPI(
     title="Shree Ji Inventory API",
@@ -19,6 +33,7 @@ app = FastAPI(
         "for the Shree Ji boutique clothing store."
     ),
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # ── CORS Configuration (permissive for development) ─────────────

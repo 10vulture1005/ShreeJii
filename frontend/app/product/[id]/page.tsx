@@ -6,12 +6,13 @@ import { Footer } from "@/components/footer"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { useCart } from "@/contexts/cart-context"
-import { getProductById, products } from "@/lib/products-data"
-import { useState } from "react"
+import { useState, useEffect } from "react"
+import type { Product } from "@/lib/types"
 import Image from "next/image"
 import { ArrowLeft, ShoppingCart, Heart, Share2, Check } from "lucide-react"
 import Link from "next/link"
 import { ProductCard } from "@/components/product-card"
+import { api } from "@/lib/api"
 
 export default function ProductDetailPage() {
   const params = useParams()
@@ -19,12 +20,45 @@ export default function ProductDetailPage() {
   const { addToCart } = useCart()
 
   const productId = params.id as string
-  const product = getProductById(productId)
-
-  const [selectedImage, setSelectedImage] = useState(0)
-  const [selectedSize, setSelectedSize] = useState("")
-  const [selectedColor, setSelectedColor] = useState("")
+  const [product, setProduct] = useState<Product | null>(null)
+  const [relatedProducts, setRelatedProducts] = useState<Product[]>([])
+  const [isLoading, setIsLoading] = useState(true)
   const [addedToCart, setAddedToCart] = useState(false)
+
+  useEffect(() => {
+    api.getProducts()
+      .then((data: Product[]) => {
+        const found = data.find((p) => p.sku_id === productId) || null
+        setProduct(found)
+        if (found) {
+          setRelatedProducts(
+            data
+              .filter(
+                (p) => p.clothing_type === found.clothing_type && p.sku_id !== found.sku_id
+              )
+              .slice(0, 4)
+          )
+        }
+        setIsLoading(false)
+      })
+      .catch((err) => {
+        console.error(err)
+        setIsLoading(false)
+      })
+  }, [productId])
+
+  if (isLoading) {
+    return (
+      <main className="min-h-screen bg-background">
+        <Header />
+        <div className="container mx-auto px-4 py-32 text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+          <p className="text-muted-foreground">Loading product...</p>
+        </div>
+        <Footer />
+      </main>
+    )
+  }
 
   if (!product) {
     return (
@@ -42,31 +76,17 @@ export default function ProductDetailPage() {
     )
   }
 
-  const hasDiscount = product.originalPrice && product.originalPrice > product.price
-  const discountPercentage = hasDiscount
-    ? Math.round(((product.originalPrice! - product.price) / product.originalPrice!) * 100)
-    : 0
-
-  const relatedProducts = products.filter((p) => p.category === product.category && p.id !== product.id).slice(0, 4)
+  const hasDiscount = false
+  const discountPercentage = 0
 
   const handleAddToCart = () => {
-    if (!selectedSize || !selectedColor) {
-      alert("Please select size and color")
-      return
-    }
-
-    addToCart(product, selectedSize, selectedColor)
+    addToCart(product)
     setAddedToCart(true)
     setTimeout(() => setAddedToCart(false), 2000)
   }
 
   const handleBuyNow = () => {
-    if (!selectedSize || !selectedColor) {
-      alert("Please select size and color")
-      return
-    }
-
-    addToCart(product, selectedSize, selectedColor)
+    addToCart(product)
     router.push("/cart")
   }
 
@@ -87,56 +107,24 @@ export default function ProductDetailPage() {
           <div className="space-y-4">
             <div className="relative aspect-[3/4] overflow-hidden rounded-lg bg-muted">
               <Image
-                src={product.images[selectedImage] || "/placeholder.svg"}
+                src={product.image_url || "/placeholder.svg"}
                 alt={product.name}
                 fill
                 className="object-cover"
               />
-              {hasDiscount && (
-                <Badge className="absolute top-4 right-4 bg-accent text-accent-foreground text-sm">
-                  {discountPercentage}% OFF
-                </Badge>
-              )}
             </div>
-
-            {/* Thumbnail Images */}
-            {product.images.length > 1 && (
-              <div className="grid grid-cols-4 gap-3">
-                {product.images.map((image, index) => (
-                  <button
-                    key={index}
-                    onClick={() => setSelectedImage(index)}
-                    className={`relative aspect-square overflow-hidden rounded-md border-2 transition-all ${
-                      selectedImage === index ? "border-primary" : "border-transparent hover:border-border"
-                    }`}
-                  >
-                    <Image
-                      src={image || "/placeholder.svg"}
-                      alt={`${product.name} ${index + 1}`}
-                      fill
-                      className="object-cover"
-                    />
-                  </button>
-                ))}
-              </div>
-            )}
           </div>
 
           {/* Product Info */}
           <div className="space-y-6">
             <div>
               <p className="text-sm text-muted-foreground uppercase tracking-wider mb-2">
-                {product.category.replace("-", " ")}
+                {product.clothing_type.replace("-", " ")}
               </p>
               <h1 className="text-4xl font-serif font-semibold text-foreground mb-4">{product.name}</h1>
 
               <div className="flex items-center gap-3 mb-4">
                 <p className="text-3xl font-semibold text-foreground">₹{product.price.toLocaleString()}</p>
-                {hasDiscount && (
-                  <p className="text-xl text-muted-foreground line-through">
-                    ₹{product.originalPrice?.toLocaleString()}
-                  </p>
-                )}
               </div>
 
               <p className="text-foreground/80 leading-relaxed">{product.description}</p>
@@ -148,40 +136,10 @@ export default function ProductDetailPage() {
               <p className="text-muted-foreground">{product.fabric}</p>
             </div>
 
-            {/* Size Selection */}
+            {/* Color Info */}
             <div className="border-t border-border pt-6">
-              <h3 className="text-sm font-semibold text-foreground mb-3">Select Size</h3>
-              <div className="flex flex-wrap gap-2">
-                {product.sizes.map((size) => (
-                  <Button
-                    key={size}
-                    variant={selectedSize === size ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setSelectedSize(size)}
-                    className={selectedSize === size ? "bg-primary text-primary-foreground" : ""}
-                  >
-                    {size}
-                  </Button>
-                ))}
-              </div>
-            </div>
-
-            {/* Color Selection */}
-            <div className="border-t border-border pt-6">
-              <h3 className="text-sm font-semibold text-foreground mb-3">Select Color</h3>
-              <div className="flex flex-wrap gap-2">
-                {product.colors.map((color) => (
-                  <Button
-                    key={color}
-                    variant={selectedColor === color ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setSelectedColor(color)}
-                    className={selectedColor === color ? "bg-primary text-primary-foreground" : ""}
-                  >
-                    {color}
-                  </Button>
-                ))}
-              </div>
+              <h3 className="text-sm font-semibold text-foreground mb-2">Color</h3>
+              <p className="text-muted-foreground">{product.color}</p>
             </div>
 
             {/* Action Buttons */}
@@ -225,7 +183,7 @@ export default function ProductDetailPage() {
             <h2 className="text-3xl font-serif font-semibold text-foreground mb-8">You May Also Like</h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
               {relatedProducts.map((relatedProduct) => (
-                <ProductCard key={relatedProduct.id} product={relatedProduct} />
+                <ProductCard key={relatedProduct.sku_id} product={relatedProduct} />
               ))}
             </div>
           </section>

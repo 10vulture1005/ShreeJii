@@ -55,7 +55,7 @@ export function CollectionsSection() {
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
           {collections.map((collection, index) => (
-            <Link key={index} href="#" className="group">
+            <Link key={index} href="/collections" className="group">
               <Card className="overflow-hidden border-border hover:shadow-xl transition-all duration-300">
                 <div className="relative aspect-[3/4] overflow-hidden">
                   <img

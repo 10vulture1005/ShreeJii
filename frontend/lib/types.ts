@@ -1,20 +1,19 @@
 export interface Product {
-  id: string
+  sku_id: string
   name: string
-  category: "sarees" | "indo-western" | "bridal" | "festive" | "ethnic" | "party-wear"
+  source_name: string
+  clothing_type: string
+  color: string
   price: number
-  originalPrice?: number
-  images: string[]
-  description: string
-  fabric: string
-  sizes: string[]
-  colors: string[]
+  image_url?: string | null
+  qr_image_url?: string | null
+  stock_count: number
+  description?: string
+  fabric?: string
   featured?: boolean
 }
 
 export interface CartItem {
   product: Product
   quantity: number
-  selectedSize: string
-  selectedColor: string
 }

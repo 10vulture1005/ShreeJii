@@ -1,5 +1,6 @@
 "use client"
 
+import { useState } from "react"
 import { Header } from "@/components/header"
 import { Footer } from "@/components/footer"
 import { Button } from "@/components/ui/button"
@@ -8,9 +9,35 @@ import { useCart } from "@/contexts/cart-context"
 import Image from "next/image"
 import Link from "next/link"
 import { Minus, Plus, Trash2, ShoppingBag } from "lucide-react"
+import { api } from "@/lib/api"
 
 export default function CartPage() {
-  const { cart, updateQuantity, removeFromCart, getCartTotal } = useCart()
+  const { cart, updateQuantity, removeFromCart, getCartTotal, clearCart } = useCart()
+  const [isCheckingOut, setIsCheckingOut] = useState(false)
+  const [checkoutError, setCheckoutError] = useState<string | null>(null)
+
+  const handleCheckout = async () => {
+    if (cart.length === 0) return
+
+    setIsCheckingOut(true)
+    setCheckoutError(null)
+
+    try {
+      const payloads = cart.map((item) => ({
+        sku_id: item.product.sku_id,
+        quantity_purchased: item.quantity,
+      }))
+
+      const data = await api.bulkCheckout(payloads)
+      alert(data.message)
+      clearCart()
+    } catch (error: any) {
+      setCheckoutError(error.message)
+      alert(error.message)
+    } finally {
+      setIsCheckingOut(false)
+    }
+  }
 
   const deliveryCharge = cart.length > 0 ? 99 : 0
   const subtotal = getCartTotal()
@@ -47,7 +74,7 @@ export default function CartPage() {
           <div className="lg:col-span-2 space-y-4">
             {cart.map((item) => (
               <Card
-                key={`${item.product.id}-${item.selectedSize}-${item.selectedColor}`}
+                key={item.product.sku_id}
                 className="border-border hover:shadow-md transition-shadow"
               >
                 <CardContent className="p-4">
@@ -55,7 +82,7 @@ export default function CartPage() {
                     {/* Product Image */}
                     <div className="relative w-24 h-32 flex-shrink-0 overflow-hidden rounded-md bg-muted">
                       <Image
-                        src={item.product.images[0] || "/placeholder.svg"}
+                        src={item.product.image_url || "/placeholder.svg"}
                         alt={item.product.name}
                         fill
                         className="object-cover"
@@ -67,19 +94,19 @@ export default function CartPage() {
                       <div className="flex justify-between mb-2">
                         <div>
                           <Link
-                            href={`/product/${item.product.id}`}
+                            href={`/product/${item.product.sku_id}`}
                             className="font-semibold text-foreground hover:text-primary transition-colors"
                           >
                             {item.product.name}
                           </Link>
                           <p className="text-sm text-muted-foreground mt-1">
-                            {item.selectedSize} • {item.selectedColor}
+                            {item.product.color}
                           </p>
                         </div>
                         <Button
                           variant="ghost"
                           size="icon"
-                          onClick={() => removeFromCart(item.product.id, item.selectedSize, item.selectedColor)}
+                          onClick={() => removeFromCart(item.product.sku_id)}
                           className="text-muted-foreground hover:text-destructive"
                         >
                           <Trash2 className="h-4 w-4" />
@@ -94,7 +121,7 @@ export default function CartPage() {
                             size="icon"
                             className="h-8 w-8"
                             onClick={() =>
-                              updateQuantity(item.product.id, item.selectedSize, item.selectedColor, item.quantity - 1)
+                              updateQuantity(item.product.sku_id, item.quantity - 1)
                             }
                           >
                             <Minus className="h-3 w-3" />
@@ -105,7 +132,7 @@ export default function CartPage() {
                             size="icon"
                             className="h-8 w-8"
                             onClick={() =>
-                              updateQuantity(item.product.id, item.selectedSize, item.selectedColor, item.quantity + 1)
+                              updateQuantity(item.product.sku_id, item.quantity + 1)
                             }
                           >
                             <Plus className="h-3 w-3" />
@@ -145,8 +172,13 @@ export default function CartPage() {
                   </div>
                 </div>
 
-                <Button className="w-full mb-3 bg-primary hover:bg-primary/90" size="lg">
-                  Proceed to Checkout
+                <Button 
+                  className="w-full mb-3 bg-primary hover:bg-primary/90" 
+                  size="lg"
+                  onClick={handleCheckout}
+                  disabled={isCheckingOut}
+                >
+                  {isCheckingOut ? "Processing..." : "Proceed to Checkout"}
                 </Button>
 
                 <Link href="/contact">
