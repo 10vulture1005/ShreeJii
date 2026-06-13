@@ -173,20 +173,24 @@ def build_imagen_prompts(metadata: Dict[str, Any]) -> List[Tuple[str, str]]:
     desc = metadata.get("description", "")
 
     base = (
-        f"Fashion editorial photograph of a beautiful Indian model wearing the EXACT described {color} {fabric} "
-        f"{style} {length} outfit with {neckline} neckline and {sleeve} sleeves. "
-        f"Garment Details: {desc} "
-        f"CRITICAL: The generated image MUST feature the identical clothing design, embroidery, patterns, and fabric drape as described. "
-        f"Indian ethnic fashion photography for e-commerce, studio lighting, clean white background, "
-        f"professional Vogue India editorial style. "
-        f"Model has Indian skin tone and features, elegant pose. "
-        f"Extremely high resolution, 8k, ultra-detailed, photorealistic, sharp focus."
+        f"Use the described clothing as the exact garment reference. Preserve the garment exactly as described, "
+        f"including color ({color}), fabric texture ({fabric}), style ({style}), length ({length}), sleeves ({sleeve}), "
+        f"neckline ({neckline}), embroidery, prints, patterns, stitching, fit, and all design details. "
+        f"Garment Description: {desc} "
+        f"Do not modify, redesign, embellish, or change any aspect of the clothing. "
+        f"Place the garment on a professional female Indian fashion model with realistic body proportions and Indian skin tone. "
+        f"Create a premium e-commerce product photograph for a luxury women's fashion boutique website. "
+        f"Clean light-neutral background, soft professional studio lighting, sharp focus, accurate color reproduction, "
+        f"realistic fabric draping, highly detailed texture visibility, commercial catalog photography, "
+        f"photorealistic, ultra-realistic, high resolution, 8K quality. "
+        f"The clothing must remain the primary focus of the image. No distracting accessories, no excessive jewelry, "
+        f"no dramatic poses, no cluttered background, no text, no watermark, no logo, no cropped garment, no artistic filters."
     )
 
     return [
-        (f"{base} Full-body front view, model facing camera directly, showing the complete outfit and fabric drape.", "front"),
-        (f"{base} Three-quarter view, model turned slightly showing the side drape and silhouette.", "3quarter"),
-        (f"{base} Back view showing the back design, pallu drape or back detailing of the garment.", "back"),
+        (f"{base} Full-body shot, front-facing pose, natural posture, garment clearly visible from top to bottom.", "front"),
+        (f"{base} Full-body shot, three-quarter angle pose, natural posture, showing the side profile and drape.", "3quarter"),
+        (f"{base} Full-body shot, back-facing pose, showing the back design and rear drape of the garment.", "back"),
     ]
 
 
