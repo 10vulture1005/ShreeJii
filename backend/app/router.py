@@ -37,19 +37,27 @@ from app.schemas import (
 from app.sku_utils import generate_sku
 from app.auth_utils import verify_password, get_password_hash, create_access_token
 from app.auth_deps import get_current_user, get_admin_user
-import razorpay
+import json
+import requests
 import hmac
 import hashlib
+import uuid
 
 router = APIRouter()
 
-# ── Razorpay Client ──────────────────────────────────────────────
+# ── PhonePe Client Configuration ─────────────────────────────────
 from dotenv import load_dotenv
 load_dotenv()
 
-RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID", "")
-RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET", "")
-razorpay_client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
+PHONEPE_MERCHANT_ID = os.getenv("PHONEPE_MERCHANT_ID", "")
+PHONEPE_SALT_KEY = os.getenv("PHONEPE_SALT_KEY", "")
+PHONEPE_SALT_INDEX = os.getenv("PHONEPE_SALT_INDEX", "1")
+PHONEPE_ENV = os.getenv("PHONEPE_ENV", "UAT") # UAT or PROD
+
+if PHONEPE_ENV == "PROD":
+    PHONEPE_HOST_URL = "https://api.phonepe.com/apis/hermes"
+else:
+    PHONEPE_HOST_URL = "https://api-preprod.phonepe.com/apis/pg-sandbox"
 
 # ── 0. Auth & Users ─────────────────────────────────────────────
 
@@ -715,15 +723,32 @@ def get_admin_stats(db: Database = Depends(get_db), admin_user: dict = Depends(g
     )
 
 
-# ── 6. Razorpay Payment (Web Only) ──────────────────────────────
+# ── 6. PhonePe Payment (Web Only) ──────────────────────────────
+
+import base64
+
+def generate_phonepe_checksum(payload_dict: dict, endpoint: str, salt_key: str, salt_index: str) -> tuple[str, str]:
+    payload_json = json.dumps(payload_dict)
+    base64_payload = base64.b64encode(payload_json.encode("utf-8")).decode("utf-8")
+    string_to_hash = base64_payload + endpoint + salt_key
+    sha256_hash = hashlib.sha256(string_to_hash.encode("utf-8")).hexdigest()
+    x_verify = sha256_hash + "###" + salt_index
+    return base64_payload, x_verify
+
+def generate_phonepe_status_checksum(transaction_id: str, merchant_id: str, salt_key: str, salt_index: str) -> str:
+    endpoint = f"/pg/v1/status/{merchant_id}/{transaction_id}"
+    string_to_hash = endpoint + salt_key
+    sha256_hash = hashlib.sha256(string_to_hash.encode("utf-8")).hexdigest()
+    x_verify = sha256_hash + "###" + salt_index
+    return x_verify
 
 @router.post(
     "/api/payment/create-order",
     response_model=CreateOrderResponse,
-    summary="Create a Razorpay order for web checkout",
+    summary="Create a PhonePe order for web checkout",
     tags=["Payment"],
 )
-def create_razorpay_order(
+def create_phonepe_order(
     payload: CreateOrderRequest,
     current_user: dict = Depends(get_current_user),
     db: Database = Depends(get_db),
@@ -733,13 +758,13 @@ def create_razorpay_order(
     - Verifies the user has a valid saved delivery address
     - Validates stock availability for every item
     - Calculates total amount (items + delivery charge)
-    - Creates a Razorpay order via their API
+    - Creates a PhonePe order payload and returns the redirect URL
     - Stores the order in the `orders` collection with user_id and address_id
     """
-    if not RAZORPAY_KEY_ID or not RAZORPAY_KEY_SECRET:
+    if not PHONEPE_MERCHANT_ID or not PHONEPE_SALT_KEY:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Razorpay is not configured. Please set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET.",
+            detail="PhonePe is not configured. Please set PHONEPE_MERCHANT_ID and PHONEPE_SALT_KEY.",
         )
 
     # ── Verify address belongs to user ──────────────────────────
@@ -780,27 +805,56 @@ def create_razorpay_order(
                 ),
             )
 
-    # Calculate total in paise (Razorpay expects amounts in smallest currency unit)
+    # Calculate total in paise (PhonePe expects amounts in smallest currency unit)
     items_total = sum(float(item.price) * item.quantity for item in payload.items)
     delivery = float(payload.delivery_charge)
     total_paise = int(round((items_total + delivery) * 100))
+    
+    transaction_id = "TXN" + str(uuid.uuid4().hex)[:16].upper()
+    user_id_str = current_user["id"]
 
-    # Create Razorpay order
+    phonepe_payload = {
+        "merchantId": PHONEPE_MERCHANT_ID,
+        "merchantTransactionId": transaction_id,
+        "merchantUserId": user_id_str,
+        "amount": total_paise,
+        "redirectUrl": f"{os.getenv('FRONTEND_URL', 'http://localhost:3000')}/payment/status",
+        "redirectMode": "REDIRECT",
+        "callbackUrl": f"{os.getenv('BACKEND_URL', 'http://localhost:8000')}/api/payment/callback",
+        "mobileNumber": address.get("phone", "9999999999"),
+        "paymentInstrument": {
+            "type": "PAY_PAGE"
+        }
+    }
+
+    base64_payload, x_verify = generate_phonepe_checksum(
+        phonepe_payload, "/pg/v1/pay", PHONEPE_SALT_KEY, PHONEPE_SALT_INDEX
+    )
+
     try:
-        razorpay_order = razorpay_client.order.create({
-            "amount": total_paise,
-            "currency": "INR",
-            "payment_capture": 1,  # auto-capture payment
-        })
+        response = requests.post(
+            f"{PHONEPE_HOST_URL}/pg/v1/pay",
+            json={"request": base64_payload},
+            headers={
+                "Content-Type": "application/json",
+                "X-VERIFY": x_verify,
+            }
+        )
+        response_data = response.json()
+        
+        if not response.ok or not response_data.get("success"):
+            raise Exception(response_data.get("message", "Unknown error from PhonePe"))
+            
+        redirect_url = response_data["data"]["instrumentResponse"]["redirectInfo"]["url"]
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to create Razorpay order: {str(e)}",
+            detail=f"Failed to create PhonePe order: {str(e)}",
         )
 
     # Store order in MongoDB with user and address linkage
     order_doc = {
-        "razorpay_order_id": razorpay_order["id"],
+        "transaction_id": transaction_id,
         "user_id": ObjectId(current_user["id"]),
         "address_id": address_oid,
         "items": [
@@ -821,43 +875,69 @@ def create_razorpay_order(
     db.orders.insert_one(order_doc)
 
     return CreateOrderResponse(
-        razorpay_order_id=razorpay_order["id"],
+        transaction_id=transaction_id,
+        redirect_url=redirect_url,
         amount=total_paise,
-        currency="INR",
-        key_id=RAZORPAY_KEY_ID,
     )
 
 
 @router.post(
     "/api/payment/create-test-order",
     response_model=CreateOrderResponse,
-    summary="Create a ₹1 test order for Razorpay integration testing",
+    summary="Create a ₹1 test order for PhonePe integration testing",
     tags=["Payment"],
 )
 def create_test_order(db: Database = Depends(get_db)):
-    if not RAZORPAY_KEY_ID or not RAZORPAY_KEY_SECRET:
+    if not PHONEPE_MERCHANT_ID or not PHONEPE_SALT_KEY:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Razorpay is not configured.",
+            detail="PhonePe is not configured.",
         )
     
     total_paise = 100 # Minimum ₹1
+    transaction_id = "TEST" + str(uuid.uuid4().hex)[:16].upper()
+
+    phonepe_payload = {
+        "merchantId": PHONEPE_MERCHANT_ID,
+        "merchantTransactionId": transaction_id,
+        "merchantUserId": "testuser",
+        "amount": total_paise,
+        "redirectUrl": f"{os.getenv('FRONTEND_URL', 'http://localhost:3000')}/payment/status",
+        "redirectMode": "REDIRECT",
+        "callbackUrl": f"{os.getenv('BACKEND_URL', 'http://localhost:8000')}/api/payment/callback",
+        "mobileNumber": "9999999999",
+        "paymentInstrument": {
+            "type": "PAY_PAGE"
+        }
+    }
+
+    base64_payload, x_verify = generate_phonepe_checksum(
+        phonepe_payload, "/pg/v1/pay", PHONEPE_SALT_KEY, PHONEPE_SALT_INDEX
+    )
 
     try:
-        razorpay_order = razorpay_client.order.create({
-            "amount": total_paise,
-            "currency": "INR",
-            "payment_capture": 1,
-        })
+        response = requests.post(
+            f"{PHONEPE_HOST_URL}/pg/v1/pay",
+            json={"request": base64_payload},
+            headers={
+                "Content-Type": "application/json",
+                "X-VERIFY": x_verify,
+            }
+        )
+        response_data = response.json()
+        if not response.ok or not response_data.get("success"):
+            raise Exception(response_data.get("message", "Unknown error from PhonePe"))
+            
+        redirect_url = response_data["data"]["instrumentResponse"]["redirectInfo"]["url"]
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to create Razorpay order: {str(e)}",
+            detail=f"Failed to create PhonePe order: {str(e)}",
         )
 
     # Store order as a test order
     order_doc = {
-        "razorpay_order_id": razorpay_order["id"],
+        "transaction_id": transaction_id,
         "items": [],
         "delivery_charge": 0,
         "amount_paise": total_paise,
@@ -869,63 +949,72 @@ def create_test_order(db: Database = Depends(get_db)):
     db.orders.insert_one(order_doc)
 
     return CreateOrderResponse(
-        razorpay_order_id=razorpay_order["id"],
+        transaction_id=transaction_id,
+        redirect_url=redirect_url,
         amount=total_paise,
-        currency="INR",
-        key_id=RAZORPAY_KEY_ID,
     )
 
 
 @router.post(
     "/api/payment/verify",
     response_model=VerifyPaymentResponse,
-    summary="Verify Razorpay payment and complete checkout",
+    summary="Verify PhonePe payment and complete checkout",
     tags=["Payment"],
 )
-def verify_razorpay_payment(payload: VerifyPaymentRequest, db: Database = Depends(get_db)):
+def verify_phonepe_payment(payload: VerifyPaymentRequest, db: Database = Depends(get_db)):
     """
     Step 2 of the web payment flow:
-    - Verifies the Razorpay payment signature (HMAC SHA256)
-    - On success: deducts stock, records sales (same collection as POS),
-      and updates order status to "paid"
-    - This ensures admin dashboard stats include web orders automatically
+    - Verifies the PhonePe payment status via the S2S Status API
+    - On success: deducts stock, records sales, and updates order status to "paid"
     """
-    # 1. Verify the payment signature
-    message = f"{payload.razorpay_order_id}|{payload.razorpay_payment_id}"
-    expected_signature = hmac.new(
-        RAZORPAY_KEY_SECRET.encode("utf-8"),
-        message.encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()
-
-    if expected_signature != payload.razorpay_signature:
-        # Update order status to failed
-        db.orders.update_one(
-            {"razorpay_order_id": payload.razorpay_order_id},
-            {"$set": {"status": "failed", "updated_at": datetime.utcnow()}},
+    # 1. Verify the payment status with PhonePe
+    x_verify = generate_phonepe_status_checksum(
+        payload.transaction_id, PHONEPE_MERCHANT_ID, PHONEPE_SALT_KEY, PHONEPE_SALT_INDEX
+    )
+    
+    try:
+        response = requests.get(
+            f"{PHONEPE_HOST_URL}/pg/v1/status/{PHONEPE_MERCHANT_ID}/{payload.transaction_id}",
+            headers={
+                "Content-Type": "application/json",
+                "X-VERIFY": x_verify,
+                "X-MERCHANT-ID": PHONEPE_MERCHANT_ID,
+            }
         )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Payment verification failed. Invalid signature.",
-        )
+        status_data = response.json()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail="Error communicating with PhonePe")
 
     # 2. Look up the order
-    order = db.orders.find_one({"razorpay_order_id": payload.razorpay_order_id})
+    order = db.orders.find_one({"transaction_id": payload.transaction_id})
     if not order:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Order not found.",
         )
+        
     if order.get("status") == "paid":
         return VerifyPaymentResponse(
             success=True,
             message="Payment was already verified.",
-            order_id=payload.razorpay_order_id,
+            order_id=payload.transaction_id,
+        )
+
+    if not status_data.get("success") or status_data.get("code") != "PAYMENT_SUCCESS":
+        # Update order status to failed
+        db.orders.update_one(
+            {"transaction_id": payload.transaction_id},
+            {"$set": {"status": "failed", "updated_at": datetime.utcnow()}},
+        )
+        return VerifyPaymentResponse(
+            success=False,
+            message="Payment failed or is pending.",
+            order_id=payload.transaction_id,
         )
 
     # 3. Deduct stock and record sales (same collection as app/POS)
     collection = db.products
-    for item in order["items"]:
+    for item in order.get("items", []):
         updated = collection.find_one_and_update(
             {
                 "sku_id": item["sku_id"],
@@ -942,19 +1031,17 @@ def verify_razorpay_payment(payload: VerifyPaymentRequest, db: Database = Depend
                 "price": float(item["price"]),
                 "total_amount": float(item["price"]) * item["quantity"],
                 "source": "web",
-                "razorpay_order_id": payload.razorpay_order_id,
-                "razorpay_payment_id": payload.razorpay_payment_id,
+                "transaction_id": payload.transaction_id,
                 "timestamp": datetime.utcnow(),
             })
 
     # 4. Update order status to paid
     db.orders.update_one(
-        {"razorpay_order_id": payload.razorpay_order_id},
+        {"transaction_id": payload.transaction_id},
         {
             "$set": {
                 "status": "paid",
-                "razorpay_payment_id": payload.razorpay_payment_id,
-                "razorpay_signature": payload.razorpay_signature,
+                "phonepe_response": status_data,
                 "updated_at": datetime.utcnow(),
             }
         },
@@ -963,5 +1050,5 @@ def verify_razorpay_payment(payload: VerifyPaymentRequest, db: Database = Depend
     return VerifyPaymentResponse(
         success=True,
         message="Payment verified successfully. Your order has been placed!",
-        order_id=payload.razorpay_order_id,
+        order_id=payload.transaction_id,
     )

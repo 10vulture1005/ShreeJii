@@ -25,11 +25,7 @@ import {
   Package,
 } from "lucide-react"
 
-declare global {
-  interface Window {
-    Razorpay: any
-  }
-}
+// No global window declarations needed for PhonePe redirect
 
 // ── Indian states for the address dropdown ──────────────────────
 const INDIAN_STATES = [
@@ -139,7 +135,7 @@ export default function CheckoutPage() {
     }
   }
 
-  // ── Razorpay checkout ─────────────────────────────────────────
+  // ── PhonePe checkout ─────────────────────────────────────────
   const handlePayment = async () => {
     if (!token || !selectedAddressId || cart.length === 0) return
 
@@ -153,59 +149,19 @@ export default function CheckoutPage() {
         price: item.product.price,
       }))
 
-      const orderData = await api.createRazorpayOrder(
+      const orderData = await api.createPhonePeOrder(
         token,
         items,
         deliveryCharge,
         selectedAddressId,
       )
 
-      const options = {
-        key: orderData.key_id,
-        amount: orderData.amount,
-        currency: orderData.currency,
-        name: "Shree Ji",
-        description: "Purchase from Shree Ji",
-        order_id: orderData.razorpay_order_id,
-        handler: async (response: any) => {
-          try {
-            await api.verifyPayment(token, {
-              razorpay_order_id: response.razorpay_order_id,
-              razorpay_payment_id: response.razorpay_payment_id,
-              razorpay_signature: response.razorpay_signature,
-            })
-            clearCart()
-            router.push("/checkout-success")
-          } catch (verifyError: any) {
-            setCheckoutError(
-              verifyError.message ||
-                "Payment verification failed. Please contact support.",
-            )
-            setIsCheckingOut(false)
-          }
-        },
-        modal: {
-          ondismiss: () => {
-            setIsCheckingOut(false)
-          },
-        },
-        prefill: {
-          name: user?.name || "",
-          email: user?.email || "",
-        },
-        theme: {
-          color: "#7c3aed",
-        },
+      if (orderData.redirect_url) {
+        // Redirect user to PhonePe securely hosted payment page
+        window.location.href = orderData.redirect_url
+      } else {
+        throw new Error("No redirect URL provided by the payment gateway.")
       }
-
-      const razorpay = new window.Razorpay(options)
-      razorpay.on("payment.failed", (response: any) => {
-        setCheckoutError(
-          response.error?.description || "Payment failed. Please try again.",
-        )
-        setIsCheckingOut(false)
-      })
-      razorpay.open()
     } catch (error: any) {
       setCheckoutError(error.message)
       setIsCheckingOut(false)
@@ -674,7 +630,7 @@ export default function CheckoutPage() {
                 <div className="mt-6 pt-6 border-t border-border">
                   <div className="flex items-center gap-2 text-sm text-muted-foreground mb-3">
                     <ShieldCheck className="h-4 w-4 text-green-500" />
-                    <span>Secure checkout powered by Razorpay</span>
+                    <span>Secure checkout powered by PhonePe</span>
                   </div>
                   <div className="flex gap-2 flex-wrap">
                     <div className="px-3 py-2 border border-border rounded text-xs text-muted-foreground">

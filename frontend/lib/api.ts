@@ -183,9 +183,9 @@ export const api = {
     return res.json()
   },
 
-  // ── Payment (Razorpay) ─────────────────────────────────────────
+  // ── Payment (PhonePe) ─────────────────────────────────────────
 
-  createRazorpayOrder: async (
+  createPhonePeOrder: async (
     token: string,
     items: { sku_id: string; quantity: number; price: number }[],
     deliveryCharge: number,
@@ -210,7 +210,7 @@ export const api = {
     return res.json()
   },
 
-  createTestRazorpayOrder: async () => {
+  createTestPhonePeOrder: async () => {
     const res = await fetch(`${API_URL}/api/payment/create-test-order`, {
       method: "POST",
     })
@@ -221,12 +221,10 @@ export const api = {
     return res.json()
   },
 
-  verifyPayment: async (
+  verifyPhonePePayment: async (
     token: string,
     data: {
-      razorpay_order_id: string
-      razorpay_payment_id: string
-      razorpay_signature: string
+      transaction_id: string
     },
   ) => {
     const res = await fetch(`${API_URL}/api/payment/verify`, {

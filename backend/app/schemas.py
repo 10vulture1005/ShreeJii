@@ -208,22 +208,19 @@ class CreateOrderRequest(BaseModel):
 
 
 class CreateOrderResponse(BaseModel):
-    """Response after creating a Razorpay order."""
-    razorpay_order_id: str
+    """Response after creating a PhonePe order."""
+    transaction_id: str
+    redirect_url: str
     amount: int  # in paise
-    currency: str
-    key_id: str
 
 
 class VerifyPaymentRequest(BaseModel):
     """Payload for POST /api/payment/verify"""
-    razorpay_order_id: str
-    razorpay_payment_id: str
-    razorpay_signature: str
+    transaction_id: str
 
 
 class VerifyPaymentResponse(BaseModel):
-    """Response after verifying a Razorpay payment."""
+    """Response after verifying a PhonePe payment."""
     success: bool
     message: str
     order_id: Optional[str] = None

@@ -21,20 +21,22 @@ from bson import ObjectId
 
 # ── 1. Metadata Extraction — Gemini Vision ───────────────────────
 
-METADATA_PROMPT = """You are a fashion product cataloguing assistant for an Indian boutique clothing store (Shree Ji). Analyze the clothing item in this photo and return ONLY a JSON object with these exact fields. No preamble, no markdown fences.
+METADATA_PROMPT = """You are an expert fashion product cataloguing assistant for an Indian boutique clothing store (Shree Ji). Analyze the clothing item in this photo with EXTREME precision and return ONLY a JSON object with these exact fields. No preamble, no markdown fences.
+
+CRITICAL INSTRUCTION: You MUST accurately identify the specific type of clothing from the photo. If it is a Suit, Salwar Kameez, or Kurti, DO NOT label it as a Saree. You MUST also accurately identify the EXACT primary color of the garment. Your output is used to generate product mockups, so errors in identifying the style or color will ruin the product.
 
 The store specializes in Indian ethnic and fusion wear — sarees, lehengas, kurtis, salwar kameez, dupattas, blouses, indo-western outfits, festive and bridal wear. Identify the garment type accurately for the Indian market.
 
 {
   "name": "Creative, marketable product title (3-6 words, e.g. 'Royal Banarasi Silk Saree', 'Emerald Anarkali Gown', 'Blush Chikankari Kurti')",
-  "description": "2-3 sentence product description for Indian customers, highlighting fabric quality, drape/silhouette, embroidery/zari/work details, and suitable occasions. Tone: warm, aspirational, festive.",
-  "color": "Primary color name (e.g. 'Maroon', 'Rani Pink', 'Royal Blue', 'Sage Green', 'Ivory')",
-  "style": "Garment style (e.g. 'Banarasi', 'Anarkali', 'A-line Kurti', 'Lehenga Choli', 'Palazzo Set', 'Saree', 'Sharara')",
+  "description": "2-3 sentence product description. Accurately describe the exact visual details, patterns, color, and style of the clothing seen in the image.",
+  "color": "EXACT primary color seen in the photo (e.g. 'Maroon', 'Rani Pink', 'Royal Blue', 'Sage Green', 'Ivory'). This MUST be accurate.",
+  "style": "EXACT Garment style seen in the photo (e.g. 'Salwar Suit', 'Anarkali', 'A-line Kurti', 'Lehenga Choli', 'Palazzo Set', 'Saree'). Do not guess incorrectly.",
   "occasion": ["Array of occasions, e.g. 'Wedding', 'Festive', 'Pooja', 'Sangeet', 'Party', 'Daily Wear', 'Office'"],
-  "sleeve": "Sleeve type (e.g. 'Sleeveless', 'Half sleeve', 'Three-quarter', 'Full sleeve', 'Cap sleeve', 'Bell sleeve')",
-  "neckline": "Neckline type (e.g. 'V-neck', 'Round neck', 'Boat neck', 'Sweetheart', 'Mandarin collar', 'Keyhole')",
-  "fabric": "Fabric if identifiable (e.g. 'Silk', 'Georgette', 'Chiffon', 'Cotton', 'Chanderi', 'Banarasi', 'Net', 'Crepe'). Use 'Unknown' if unclear.",
-  "length": "Garment length (e.g. 'Full length', 'Knee-length', 'Ankle-length', 'Mid-calf', 'Floor length')"
+  "sleeve": "Sleeve type seen in the photo (e.g. 'Sleeveless', 'Half sleeve', 'Three-quarter', 'Full sleeve', 'Cap sleeve', 'Bell sleeve')",
+  "neckline": "Neckline type seen in the photo",
+  "fabric": "Fabric if identifiable (e.g. 'Silk', 'Georgette', 'Cotton'). Use 'Unknown' if unclear.",
+  "length": "Garment length seen in the photo"
 }"""
 
 
@@ -70,7 +72,7 @@ def analyze_garment_gemini(image_bytes: bytes, mime_type: str) -> Optional[Dict[
         client = genai.Client(api_key=api_key)
 
         response = client.models.generate_content(
-            model="gemini-3.5-flash",
+            model="gemini-3.1-pro-preview",
             contents=[
                 types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
                 METADATA_PROMPT,        
@@ -174,14 +176,16 @@ def build_imagen_prompts(metadata: Dict[str, Any]) -> List[Tuple[str, str]]:
 
     # Common garment properties to inject
     garment_details = (
+        f"CRITICAL INSTRUCTIONS: The garment MUST be exactly a {style}. Do not generate a saree if the style is a suit, kurti, lehenga, etc. "
+        f"The main color of the outfit MUST be exactly {color}. Do not use any other primary color. "
+        f"Fabric texture ({fabric}), length ({length}), sleeves ({sleeve}), neckline ({neckline}). "
         f"Garment Description: {desc}\n"
-        f"Specifics: color ({color}), fabric texture ({fabric}), style ({style}), length ({length}), sleeves ({sleeve}), neckline ({neckline})."
     )
 
     prompt_front = (
-        f"Use the described clothing as the exact garment reference. Preserve the garment exactly as described, "
+        f"{garment_details}"
+        f"Use the described clothing as the exact garment reference. Preserve the color ({color}) and clothing type ({style}) perfectly. "
         f"including embroidery, prints, patterns, stitching, fit, and all design details. Do not modify, redesign, embellish, or change any aspect of the clothing. "
-        f"{garment_details} "
         f"Place the garment on a professional female Indian fashion model with realistic body proportions and Indian skin tone. "
         f"Create a premium e-commerce product photograph for a luxury women's fashion boutique website. "
         f"POSE: Full-body shot, front-facing pose, natural posture, garment clearly visible from top to bottom. "
@@ -193,9 +197,9 @@ def build_imagen_prompts(metadata: Dict[str, Any]) -> List[Tuple[str, str]]:
     )
 
     prompt_3quarter = (
-        f"Use the described clothing as the exact garment reference. Replicate the garment flawlessly, "
-        f"maintaining all embroidery, prints, patterns, stitching, and fit without any modifications. "
-        f"{garment_details} "
+        f"{garment_details}"
+        f"Use the described clothing as the exact garment reference. Preserve the color ({color}) and clothing type ({style}) perfectly. "
+        f"Maintain all embroidery, prints, patterns, stitching, and fit without any modifications. "
         f"The outfit is worn by a professional female Indian fashion model with realistic body proportions and Indian skin tone. "
         f"This is a high-end luxury e-commerce catalog photo. "
         f"POSE: Full-body shot, elegant three-quarter angle pose. The model is turned slightly to show the side profile, silhouette, and the beautiful drape of the fabric. "
@@ -206,9 +210,9 @@ def build_imagen_prompts(metadata: Dict[str, Any]) -> List[Tuple[str, str]]:
     )
 
     prompt_back = (
-        f"Use the described clothing as the exact garment reference. The garment must be preserved exactly as shown and described, "
-        f"including embroidery, prints, patterns, stitching, and design details. Do not alter or embellish the clothing. "
-        f"{garment_details} "
+        f"{garment_details}"
+        f"Use the described clothing as the exact garment reference. Preserve the color ({color}) and clothing type ({style}) perfectly. "
+        f"The garment must be preserved exactly as shown and described, including embroidery, prints, patterns, stitching, and design details. Do not alter or embellish the clothing. "
         f"The outfit is worn by a professional female Indian fashion model with realistic body proportions and Indian skin tone. "
         f"This is a premium commercial product photograph for a women's fashion website. "
         f"POSE: Full-body shot, back-facing pose. The model is turned away from the camera to showcase the back design, rear neckline, and the back drape or pallu of the garment. "
@@ -227,9 +231,91 @@ def build_imagen_prompts(metadata: Dict[str, Any]) -> List[Tuple[str, str]]:
 
 # ── 4. Image Generation — Gemini Imagen ─────────────────────────
 
+def generate_prompts_from_vision(image_bytes: bytes, mime_type: str, api_key: str) -> Optional[List[Tuple[str, str]]]:
+    """Uses Gemini Vision to directly generate 3 highly detailed Imagen prompts based on the image."""
+    try:
+        from google import genai
+        from google.genai import types
+        import json
+
+        client = genai.Client(api_key=api_key)
+
+        prompt = (
+            "You are an expert AI prompt engineer for fashion catalog generation. "
+            "Analyze the clothing item in this image. Write 3 highly detailed, photorealistic image generation prompts "
+            "to recreate this exact garment on an Indian fashion model. "
+            "Ensure the prompts perfectly capture the color, fabric, and design details. "
+            "Return ONLY a JSON array containing exactly 3 strings (the prompts for front, 3quarter, and back angles). "
+            "Example: [\"Front view prompt...\", \"3-quarter view prompt...\", \"Back view prompt...\"]"
+        )
+
+        response = client.models.generate_content(
+            model="gemini-3.5-flash",
+            contents=[
+                types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
+                prompt,
+            ],
+        )
+
+        text = _clean_json_response(response.text)
+        prompts_list = json.loads(text)
+        
+        if isinstance(prompts_list, list) and len(prompts_list) >= 3:
+            return [
+                (str(prompts_list[0]), "front"),
+                (str(prompts_list[1]), "3quarter"),
+                (str(prompts_list[2]), "back")
+            ]
+        return None
+    except Exception as e:
+        print(f"[VSUpload] Vision prompt generation failed: {e}")
+        return None
+
+
+def generate_image_with_reference_rest(prompt: str, image_bytes: bytes, api_key: str) -> Optional[bytes]:
+    """Uses the REST API to pass the image as a Subject Reference to Imagen."""
+    try:
+        import requests
+        import base64
+
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-image:predict?key={api_key}"
+        encoded_img = base64.b64encode(image_bytes).decode('utf-8')
+        
+        payload = {
+            "instances": [{"prompt": prompt}],
+            "parameters": {
+                "sampleCount": 1,
+                "aspectRatio": "3:4",
+                "personGeneration": "ALLOW_ADULT",
+                "referenceImages": [
+                    {
+                        "referenceType": "SUBJECT",
+                        "referenceImage": {
+                            "bytesBase64Encoded": encoded_img
+                        }
+                    }
+                ]
+            }
+        }
+        
+        resp = requests.post(url, json=payload, timeout=60)
+        if resp.status_code == 200:
+            data = resp.json()
+            if "predictions" in data and len(data["predictions"]) > 0:
+                b64_out = data["predictions"][0].get("bytesBase64Encoded")
+                if b64_out:
+                    return base64.b64decode(b64_out)
+        else:
+            print(f"[VSUpload] Reference image generation failed: {resp.status_code} - {resp.text}")
+        return None
+    except Exception as e:
+        print(f"[VSUpload] Exception during reference image generation: {e}")
+        return None
+
+
 def generate_single_image(prompt: str, api_key: str) -> Optional[bytes]:
     """
-    Generate a single model photo using Gemini Imagen 3.
+    Generate a single model photo using Gemini Imagen 3 (No reference image fallback).
     Returns JPEG image bytes or None on failure.
     """
     try:
@@ -239,7 +325,7 @@ def generate_single_image(prompt: str, api_key: str) -> Optional[bytes]:
         client = genai.Client(api_key=api_key)
 
         response = client.models.generate_images(
-            model="imagen-4.0-generate-001",
+            model="gemini-3-pro-image",
             prompt=prompt,
             config=types.GenerateImagesConfig(
                 number_of_images=1,
@@ -377,47 +463,82 @@ def process_job(job_id: str, db) -> None:
             _fail_job(job_id, db, "image_gen_failed", "GEMINI_API_KEY not configured for Imagen")
             return
 
-        prompts = build_imagen_prompts(metadata)
         max_images = int(os.getenv("MAX_IMAGES_PER_JOB", "3"))
-        prompts = prompts[:max_images]
-
         generated_images = []
-        for prompt_text, angle in prompts:
-            image_bytes = None
+        advanced_success = False
 
-            # Retry with exponential backoff: 60s, 120s, 180s
-            for attempt in range(3):
-                image_bytes = generate_single_image(prompt_text, gemini_key)
+        # Try Advanced Flow: Vision Prompt Generation + Subject Reference Image
+        print(f"[VSUpload] Job {job_id}: Attempting advanced Vision -> Reference Image flow")
+        vision_prompts = generate_prompts_from_vision(best_photo, best_mime, gemini_key)
+        
+        if vision_prompts:
+            vision_prompts = vision_prompts[:max_images]
+            for prompt_text, angle in vision_prompts:
+                print(f"[VSUpload] Job {job_id}: Advanced generating {angle} with reference image...")
+                img_out = generate_image_with_reference_rest(prompt_text, best_photo, gemini_key)
+                if img_out:
+                    result = db.images.insert_one({
+                        "filename": f"{job_id}_model_{angle}.jpg",
+                        "content_type": "image/jpeg",
+                        "data": img_out,
+                        "source": "vsupload_generated_advanced",
+                        "job_id": job_id,
+                        "created_at": datetime.utcnow(),
+                    })
+                    generated_images.append({
+                        "image_id": str(result.inserted_id),
+                        "angle": angle,
+                        "url": f"/api/images/{result.inserted_id}",
+                    })
+            
+            if len(generated_images) > 0:
+                advanced_success = True
+                print(f"[VSUpload] Job {job_id}: Advanced flow succeeded with {len(generated_images)} images.")
+
+        # Fallback Flow: Uses extracted metadata to build hardcoded prompts (no reference image)
+        if not advanced_success:
+            print(f"[VSUpload] Job {job_id}: Advanced flow failed or incomplete. Falling back to hardcoded prompts.")
+            generated_images = [] # Reset in case of partial advanced generation failure
+            
+            prompts = build_imagen_prompts(metadata)
+            prompts = prompts[:max_images]
+
+            for prompt_text, angle in prompts:
+                image_bytes = None
+
+                # Retry with exponential backoff: 60s, 120s, 180s
+                for attempt in range(3):
+                    image_bytes = generate_single_image(prompt_text, gemini_key)
+                    if image_bytes:
+                        break
+                    if attempt < 2:
+                        wait = 10 * (attempt + 1)  # 10s, 20s backoff (runs in thread pool)
+                        print(f"[VSUpload] Imagen {angle} attempt {attempt + 1} failed, retrying in {wait}s...")
+                        time.sleep(wait)
+
                 if image_bytes:
-                    break
-                if attempt < 2:
-                    wait = 10 * (attempt + 1)  # 10s, 20s backoff (runs in thread pool)
-                    print(f"[VSUpload] Imagen {angle} attempt {attempt + 1} failed, retrying in {wait}s...")
-                    time.sleep(wait)
-
-            if image_bytes:
-                # Store generated image in MongoDB (same pattern as existing app)
-                result = db.images.insert_one({
-                    "filename": f"{job_id}_model_{angle}.jpg",
-                    "content_type": "image/jpeg",
-                    "data": image_bytes,
-                    "source": "vsupload_generated",
-                    "job_id": job_id,
-                    "created_at": datetime.utcnow(),
-                })
-                generated_images.append({
-                    "image_id": str(result.inserted_id),
-                    "angle": angle,
-                    "url": f"/api/images/{result.inserted_id}",
-                })
-                print(f"[VSUpload] Job {job_id}: Generated {angle} image → {result.inserted_id}")
-            else:
-                print(f"[VSUpload] Job {job_id}: Failed to generate {angle} image after 3 attempts")
+                    # Store generated image in MongoDB
+                    result = db.images.insert_one({
+                        "filename": f"{job_id}_model_{angle}.jpg",
+                        "content_type": "image/jpeg",
+                        "data": image_bytes,
+                        "source": "vsupload_generated",
+                        "job_id": job_id,
+                        "created_at": datetime.utcnow(),
+                    })
+                    generated_images.append({
+                        "image_id": str(result.inserted_id),
+                        "angle": angle,
+                        "url": f"/api/images/{result.inserted_id}",
+                    })
+                    print(f"[VSUpload] Job {job_id}: Generated {angle} image fallback → {result.inserted_id}")
+                else:
+                    print(f"[VSUpload] Job {job_id}: Failed to generate {angle} image fallback after 3 attempts")
 
         if not generated_images:
             _fail_job(
                 job_id, db, "image_gen_failed",
-                "Failed to generate any model images after retries",
+                "Failed to generate any model images via advanced or fallback methods",
             )
             return
 
