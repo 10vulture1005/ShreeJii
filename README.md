@@ -1,61 +1,67 @@
 # Shree Ji E-Commerce - Virtual Styling Upload (VSUpload) Pipeline
 
-This diagram explains the complete backend pipeline for processing raw garment photos and automatically generating AI model mockups and product metadata.
+## Reference-First Design
+
+The pipeline is built on a core principle: **the garment photo IS the source of truth.**
+
+Text prompts describe ONLY the scene, pose, and photography style — they never describe the garment itself. This prevents image generation models from overriding the actual garment with their internal biases (e.g., generating a saree when a suit was uploaded).
 
 ```mermaid
 flowchart TD
-    %% Nodes and Edges
     Start([User Uploads Raw Photos]) --> JobCreated[("MongoDB: vsupload_jobs")]
     JobCreated --> BestPhoto[Select Best Photo]
     
-    %% Metadata Extraction Phase
-    BestPhoto --> ExtractMeta{Extract Metadata}
-    ExtractMeta -- Gemini Vision --> ValidateMeta[Validate Fields]
-    ExtractMeta -- Gemini Fails --> GroqMeta[Groq Fallback]
-    ValidateMeta --> SaveMeta[("Save Metadata to Job")]
-    GroqMeta --> SaveMeta
+    %% Metadata Extraction (for catalog only)
+    BestPhoto --> GeminiVision[Gemini 3.5 Flash Vision]
+    GeminiVision --> SaveMeta[("Save Metadata to Job")]
     
-    %% Advanced Image Generation Flow
-    SaveMeta --> AdvPrompts[Gemini Vision: Generate 3 Detailed Prompts]
-    AdvPrompts --> AdvImagen[Imagen 4 REST API + Subject Reference Image]
-    AdvImagen -- Success --> StoreImages[("Store Images in MongoDB")]
+    %% Primary: Reference-Based Generation
+    SaveMeta --> RefGen["Imagen 4 + SubjectReference"]
+    BestPhoto --> |"Garment photo as reference"| RefGen
+    RefGen --> |"Scene-only prompts (3 angles)"| CheckRef{Images Generated?}
     
-    %% Fallback Image Generation Flow
-    AdvImagen -- Fails/API Error --> FallbackPrompts[Build Hardcoded Prompts from Metadata]
-    FallbackPrompts --> FallbackImagen[Imagen 4 API]
-    FallbackImagen -- Success --> StoreImages
-    FallbackImagen -- Fails --> LocalFallback[Generate Local Placeholder image]
-    LocalFallback --> StoreImages
+    %% Fallback: Text-to-Image
+    CheckRef -- Yes --> StoreImages[("Store Images in MongoDB")]
+    CheckRef -- No --> FallbackGen[Imagen 4 Text-to-Image]
+    FallbackGen --> StoreImages
 
-    %% Finalization Phase
+    %% Finalization
     StoreImages --> UpsertProduct[("Upsert vsupload_products")]
-    UpsertProduct --> FinalStatus([Update Job Status: under_review])
+    UpsertProduct --> FinalStatus([Status: under_review])
     
     %% Error handling
-    ValidateMeta -. Invalid/Missing .-> FailJob([Job Status: Failed])
-    GroqMeta -. Fails .-> FailJob
+    GeminiVision -. Fails .-> FailJob([Job Status: Failed])
 
-    %% Define Styles
+    %% Styles
     classDef userNode fill:#e1f5fe,stroke:#0288d1,stroke-width:2px,color:#01579b
     classDef processNode fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#e65100
     classDef aiNode fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,color:#4a148c
     classDef dbNode fill:#e8f5e9,stroke:#388e3c,stroke-width:2px,color:#1b5e20
     classDef errorNode fill:#ffebee,stroke:#d32f2f,stroke-width:2px,color:#b71c1c
 
-    %% Apply Styles
     class Start,FinalStatus userNode
-    class BestPhoto,ValidateMeta,FallbackPrompts,LocalFallback processNode
-    class ExtractMeta,GroqMeta,AdvPrompts,AdvImagen,FallbackImagen aiNode
+    class BestPhoto,CheckRef processNode
+    class GeminiVision,RefGen,FallbackGen aiNode
     class JobCreated,SaveMeta,StoreImages,UpsertProduct dbNode
     class FailJob errorNode
 ```
 
-## Pipeline Overview
+## How It Works
 
-1. **Upload**: Users upload raw photos of garments (like suits, kurtis, lehengas).
-2. **Metadata Extraction**: Gemini Vision acts as a fashion cataloguing expert to extract structured data (`name`, `description`, `color`, `style`, `fabric`, etc.). A text-only Groq fallback is used if Gemini is unavailable.
-3. **Advanced Image Generation**: 
-   - Gemini Vision analyzes the photo again to write 3 extremely detailed, photorealistic prompts (front, 3-quarter, and back views).
-   - These prompts, along with the original photo (as a `SubjectReference`), are sent to the Imagen 4 Developer API to generate high-accuracy model catalog photos.
-4. **Fallback Generation**: If the advanced reference image flow is restricted or fails, the pipeline falls back to generating standard prompts from the metadata and using Imagen 4 in text-to-image mode.
-5. **Database Storage**: The generated model images and the extracted metadata are compiled into a product record and placed in an `under_review` state for the admin to approve.
+1. **Upload**: Users upload raw garment photos (suits, kurtis, lehengas, etc.).
+2. **Metadata Extraction**: Gemini 3.5 Flash Vision extracts structured catalog data (`name`, `color`, `style`, `fabric`, etc.). This is used for the product listing — **not** for image generation.
+3. **Primary Image Generation (Reference-First)**:
+   - The uploaded garment photo is passed to Imagen 4 as a `SubjectReferenceImage`.
+   - The text prompt describes ONLY the scene: "Professional e-commerce catalog photo, front-facing pose, clean white studio background..."
+   - The reference image carries the garment identity — Imagen reproduces the exact clothing.
+4. **Fallback Generation**: If the reference-based flow fails, the pipeline builds simple text prompts from the metadata and uses Imagen 4 in text-to-image mode.
+5. **Database Storage**: Generated model images + extracted metadata are compiled into a product record with `under_review` status for admin approval.
+
+## Why Reference-First?
+
+| Old Approach (Text-Heavy) | New Approach (Reference-First) |
+|---|---|
+| Prompt: "A maroon salwar suit with golden embroidery..." | Prompt: "Professional catalog photo, front-facing pose..." |
+| Imagen ignores text, generates a saree | Imagen sees the actual garment photo, reproduces it |
+| Garment identity depends on text accuracy | Garment identity comes from the photo itself |
+| Vision model errors cascade to image gen | Metadata errors only affect catalog, not the image |

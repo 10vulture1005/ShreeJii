@@ -1,14 +1,15 @@
 """
-VSUpload — AI Processing Pipeline.
+VSUpload — AI Processing Pipeline (v2 — Reference-First Design).
+
+Pipeline philosophy:
+  The REFERENCE IMAGE is the source of truth for the garment.
+  Text prompts describe ONLY the scene, pose, and photography style.
+  This prevents Imagen's internal bias from overriding the actual garment.
 
 Orchestrates:
-  1. analyze_garment_gemini()  — Gemini Vision (primary, with retry)
-  2. analyze_garment_groq()    — Groq/Llama text fallback (no vision)
-  3. build_imagen_prompts()    — Build 3 Imagen prompts from metadata
-  4. generate_prompts_from_vision() — Vision-driven prompt generation (advanced)
-  5. generate_image_with_reference() — Imagen with subject reference image
-  6. generate_single_image()   — Imagen text-to-image fallback
-  7. process_job()             — Job orchestrator (MongoDB + background task)
+  1. Gemini Vision  → structured metadata for the product catalog
+  2. Imagen 4 + SubjectReference → model photos matching the exact garment
+  3. Imagen 4 text-only → fallback when reference-based generation fails
 
 Each job processes one garment group (folder of photos) end-to-end.
 """
@@ -22,9 +23,10 @@ from datetime import datetime
 from bson import ObjectId
 
 
-# ── Prompts ───────────────────────────────────────────────────────
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  PROMPTS & CONSTANTS
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-# Vision prompt: sent to Gemini alongside the image bytes.
 METADATA_PROMPT = """\
 You are an expert fashion product cataloguing assistant for Shree Ji, an Indian ethnic wear boutique.
 Analyze the clothing item in this photo with maximum precision.
@@ -42,7 +44,7 @@ Return ONLY a valid JSON object. No preamble, no markdown fences, no trailing co
 
 {
   "name": "3-6 word marketable product title, e.g. Royal Banarasi Silk Saree",
-  "description": "2-3 sentences. Describe exact visual details: pattern, embroidery, color, drape, style. Tone: warm, aspirational, festive.",
+  "description": "2-3 sentences. Describe exact visual details: pattern, embroidery, color, drape, style.",
   "color": "Dominant primary color, e.g. Maroon, Rani Pink, Royal Blue, Sage Green, Ivory",
   "style": "Exact garment style, e.g. Salwar Suit, Anarkali, A-line Kurti, Lehenga Choli, Saree",
   "occasion": ["occasion1", "occasion2"],
@@ -52,50 +54,55 @@ Return ONLY a valid JSON object. No preamble, no markdown fences, no trailing co
   "length": "Garment length, e.g. Full Length, Knee Length, Ankle Length, Midi"
 }"""
 
-
-# Text-only fallback prompt: sent to Groq when no image is available.
-# Uses .format(group_name=...) at call time.
-GROQ_FALLBACK_PROMPT = """\
-You are a fashion product cataloguing assistant for Shree Ji, an Indian ethnic wear boutique \
-(specialising in sarees, lehengas, kurtis, salwar kameez, and indo-western wear).
-
-Given only the product group name below, infer realistic metadata for an Indian ethnic garment.
-Return ONLY a valid JSON object — no preamble, no markdown, no trailing commas.
-
-Product group name: "{group_name}"
-
-{{
-  "name": "3-6 word marketable product title",
-  "description": "2-3 warm, aspirational sentences for Indian customers",
-  "color": "Primary color",
-  "style": "Garment style, e.g. Banarasi Saree, Anarkali, A-line Kurti",
-  "occasion": ["occasion1", "occasion2"],
-  "sleeve": "Sleeve type",
-  "neckline": "Neckline type",
-  "fabric": "Most likely fabric, or Unknown",
-  "length": "Garment length"
-}}"""
-
-
-# Shared image-quality constraints appended to every Imagen prompt.
-_IMAGEN_CONSTRAINTS = (
-    "Clean light-neutral studio background. Soft professional lighting. "
-    "Sharp focus, accurate color reproduction, realistic fabric draping, "
-    "highly detailed texture. Photorealistic, ultra-realistic, 8K. "
-    "No accessories, no text, no watermarks, no logo, no cropped garment, no artistic filters."
-)
-
 REQUIRED_METADATA_FIELDS = {"name", "description", "color", "style"}
 
+# ── Scene-only prompts for reference-based generation ────────────
+# These deliberately do NOT describe the garment at all.
+# The SubjectReferenceImage carries the garment identity.
 
-# ── Helpers ───────────────────────────────────────────────────────
+SCENE_PROMPTS = [
+    (
+        "Professional e-commerce catalog photo. Full-body shot of a fashion model, "
+        "front-facing, natural standing posture. The model is wearing the provided outfit. "
+        "Clean white studio background. Soft diffused professional lighting. "
+        "Sharp focus, natural skin tones, realistic fabric draping. "
+        "Photorealistic, ultra-detailed, 8K resolution. "
+        "No accessories, no jewelry, no props, no text, no watermark.",
+        "front",
+    ),
+    (
+        "Professional e-commerce catalog photo. Full-body shot of a fashion model, "
+        "elegant three-quarter angle, turned slightly to show side profile and silhouette. "
+        "The model is wearing the provided outfit. "
+        "Clean white studio background. Soft diffused professional lighting. "
+        "Sharp focus, natural skin tones, realistic fabric draping. "
+        "Photorealistic, ultra-detailed, 8K resolution. "
+        "No accessories, no jewelry, no props, no text, no watermark.",
+        "3quarter",
+    ),
+    (
+        "Professional e-commerce catalog photo. Full-body shot of a fashion model, "
+        "back-facing pose, turned away from camera to show rear design and back details. "
+        "The model is wearing the provided outfit. "
+        "Clean white studio background. Soft diffused professional lighting. "
+        "Sharp focus, natural skin tones, realistic fabric draping. "
+        "Photorealistic, ultra-detailed, 8K resolution. "
+        "No accessories, no jewelry, no props, no text, no watermark.",
+        "back",
+    ),
+]
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  HELPERS
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def _clean_json_response(text: str) -> str:
     """Strip markdown fences and leading/trailing whitespace from an AI response."""
     text = text.strip()
     if text.startswith("```"):
         lines = text.split("\n")
-        lines = lines[1:]  # drop opening fence (```json or ```)
+        lines = lines[1:]
         if lines and lines[-1].strip().startswith("```"):
             lines = lines[:-1]
         text = "\n".join(lines).strip()
@@ -104,17 +111,13 @@ def _clean_json_response(text: str) -> str:
 
 def _normalize_metadata(raw: Dict[str, Any]) -> Dict[str, Any]:
     """Coerce and clean metadata fields into expected types."""
-    # occasion must always be a list
     if isinstance(raw.get("occasion"), str):
         raw["occasion"] = [raw["occasion"]]
     elif not isinstance(raw.get("occasion"), list):
         raw["occasion"] = []
-
-    # Strip whitespace from every string field
     for key, val in raw.items():
         if isinstance(val, str):
             raw[key] = val.strip()
-
     return raw
 
 
@@ -123,17 +126,18 @@ def _validate_metadata(metadata: Dict[str, Any]) -> bool:
     return all(metadata.get(f) for f in REQUIRED_METADATA_FIELDS)
 
 
-# ── 1. Metadata Extraction — Gemini Vision (Primary) ─────────────
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  1. METADATA EXTRACTION — Gemini Vision
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def analyze_garment_gemini(
     image_bytes: bytes,
     mime_type: str,
-    max_retries: int = 2,
+    max_retries: int = 3,
 ) -> Optional[Dict[str, Any]]:
     """
     Use Gemini Vision to analyze a garment photo and return structured metadata.
-    Retries on JSON parse failures up to `max_retries` times.
-    Returns a normalized metadata dict, or None on total failure.
+    This metadata is used for the product catalog, NOT for image generation.
     """
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
@@ -144,7 +148,7 @@ def analyze_garment_gemini(
         from google import genai
         from google.genai import types
     except ImportError:
-        print("[VSUpload] google-genai not installed — pip install google-genai")
+        print("[VSUpload] google-genai not installed")
         return None
 
     client = genai.Client(api_key=api_key)
@@ -158,7 +162,7 @@ def analyze_garment_gemini(
                     types.Part.from_text(text=METADATA_PROMPT),
                 ],
                 config=types.GenerateContentConfig(
-                    temperature=0.2,        # low = consistent structured output
+                    temperature=0.2,
                     max_output_tokens=512,
                 ),
             )
@@ -169,146 +173,30 @@ def analyze_garment_gemini(
 
             if not _validate_metadata(metadata):
                 print(f"[VSUpload] Gemini attempt {attempt}: missing required fields — {metadata}")
-                continue  # retry
+                continue
 
             return metadata
 
         except json.JSONDecodeError as e:
             print(f"[VSUpload] Gemini attempt {attempt}: invalid JSON — {e}")
-            # JSON failure is recoverable; retry
-
         except Exception as e:
             print(f"[VSUpload] Gemini attempt {attempt}: fatal error — {e}")
-            break  # auth / quota / network failures won't resolve on retry
+            break
 
     return None
 
 
-# ── 2. Metadata Extraction — Groq Fallback (Text Only) ───────────
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  2. IMAGE GENERATION — Imagen 4 + Subject Reference (Primary)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-def analyze_garment_groq(group_name: str) -> Optional[Dict[str, Any]]:
+def generate_image_with_reference(
+    prompt: str, image_bytes: bytes, api_key: str
+) -> Optional[bytes]:
     """
-    Text-only fallback: infer product metadata from the group name using Groq/Llama.
-    Used when Gemini Vision is unavailable or exhausts its retries.
-    Note: no image is analyzed here — accuracy depends entirely on the group name.
-    """
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key:
-        print("[VSUpload] GROQ_API_KEY not set — skipping Groq fallback")
-        return None
-
-    try:
-        from groq import Groq
-    except ImportError:
-        print("[VSUpload] groq not installed — pip install groq")
-        return None
-
-    client = Groq(api_key=api_key)
-
-    try:
-        completion = client.chat.completions.create(
-            model="meta-llama/llama-4-scout-17b-16e-instruct",
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a fashion product cataloguing assistant for an Indian ethnic wear boutique. "
-                        "Respond ONLY with a valid JSON object. No preamble, no markdown, no explanation."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": GROQ_FALLBACK_PROMPT.format(group_name=group_name),
-                },
-            ],
-            temperature=0.3,
-            max_tokens=512,
-        )
-
-        raw = _clean_json_response(completion.choices[0].message.content)
-        metadata = json.loads(raw)
-        metadata = _normalize_metadata(metadata)
-
-        if not _validate_metadata(metadata):
-            print(f"[VSUpload] Groq fallback: missing required fields — {metadata}")
-            return None
-
-        return metadata
-
-    except json.JSONDecodeError as e:
-        print(f"[VSUpload] Groq fallback: invalid JSON — {e}")
-        return None
-    except Exception as e:
-        print(f"[VSUpload] Groq fallback: error — {e}")
-        return None
-
-
-# ── 3. Imagen Prompt Construction ────────────────────────────────
-
-def build_imagen_prompts(metadata: Dict[str, Any]) -> List[Tuple[str, str]]:
-    """
-    Build 3 Imagen prompts (front, 3-quarter, back) from garment metadata.
-    Returns list of (prompt_text, angle_name) tuples.
-    Raises ValueError if required fields (color, style) are missing.
-    """
-    missing = [f for f in ("color", "style") if not metadata.get(f)]
-    if missing:
-        raise ValueError(f"build_imagen_prompts: missing required fields: {missing}")
-
-    color    = metadata["color"]
-    style    = metadata["style"]
-    fabric   = metadata.get("fabric", "Unknown")
-    length   = metadata.get("length", "")
-    neckline = metadata.get("neckline", "")
-    sleeve   = metadata.get("sleeve", "")
-    desc     = metadata.get("description", "")
-
-    # Garment identity block — shared across all three angles
-    garment_spec = (
-        f"Garment: {style}. Color: {color}. Fabric: {fabric}. "
-        f"Length: {length}. Sleeve: {sleeve}. Neckline: {neckline}. "
-        f"Details: {desc}"
-    )
-
-    # Common base shared across all three prompts
-    base = (
-        f"STRICT REQUIREMENT — render exactly a {style} in {color}. "
-        f"Preserve ALL design details: embroidery, prints, patterns, stitching, and drape. "
-        f"Do not alter, redesign, or embellish the garment. {garment_spec}. "
-        f"Worn by a professional female fashion model with South Asian features and realistic proportions. "
-        f"Premium luxury e-commerce catalog photo. "
-    )
-
-    poses = [
-        (
-            "POSE: Full-body, front-facing, natural standing posture. "
-            "Garment fully visible from top to bottom.",
-            "front",
-        ),
-        (
-            "POSE: Full-body, elegant three-quarter angle. "
-            "Model turned slightly to reveal side profile, silhouette, and fabric drape.",
-            "3quarter",
-        ),
-        (
-            "POSE: Full-body, back-facing. "
-            "Model turned away from camera to showcase rear design, back neckline, and back drape or pallu.",
-            "back",
-        ),
-    ]
-
-    return [(base + pose + " " + _IMAGEN_CONSTRAINTS, angle) for pose, angle in poses]
-
-
-# ── 4. Image Generation — Advanced Vision Flow ──────────────────
-
-def generate_prompts_from_vision(
-    image_bytes: bytes, mime_type: str, api_key: str
-) -> Optional[List[Tuple[str, str]]]:
-    """
-    Uses Gemini Vision to analyze the garment photo and generate 3 highly detailed
-    Imagen prompts tailored to the exact garment seen in the image.
-    Returns list of (prompt_text, angle_name) or None on failure.
+    Generate an image using Imagen 4, passing the original garment photo
+    as a SubjectReferenceImage. The text prompt describes ONLY the scene/pose.
+    The reference image carries the garment identity.
     """
     try:
         from google import genai
@@ -316,120 +204,75 @@ def generate_prompts_from_vision(
 
         client = genai.Client(api_key=api_key)
 
-        prompt = (
-            "You are an expert AI prompt engineer for fashion catalog image generation. "
-            "Analyze the clothing item in this image with extreme precision. "
-            "Write 3 highly detailed, photorealistic image generation prompts "
-            "to recreate this EXACT garment on a professional fashion model with South Asian features. "
-            "\n\n"
-            "CRITICAL RULES:\n"
-            "1. Identify the EXACT garment type (suit, kurti, lehenga, saree, etc.).\n"
-            "2. If the garment is NOT a saree, you MUST include this phrase in EVERY prompt: "
-            "'(This is strictly a [style], NOT a saree. Do NOT generate a saree.)'\n"
-            "3. Specify the EXACT primary color as seen in the photo.\n"
-            "4. Describe fabric texture, embroidery, prints, patterns, and all design details.\n"
-            "5. Each prompt should specify a different angle: front, 3-quarter, and back.\n"
-            "6. End each prompt with: 'Clean studio background, soft lighting, 8K, photorealistic.'\n"
-            "\n"
-            "Return ONLY a JSON array of exactly 3 prompt strings. No markdown fences.\n"
-            'Example: ["Front view prompt...", "3-quarter view prompt...", "Back view prompt..."]'
+        subject_ref = types.SubjectReferenceImage(
+            reference_image=types.Image(image_bytes=image_bytes),
+            reference_id=0,
+            reference_type="SUBJECT",
         )
 
-        response = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=[
-                types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
-                types.Part.from_text(text=prompt),
-            ],
-            config=types.GenerateContentConfig(
-                temperature=0.3,
-                max_output_tokens=1500,
+        response = client.models.generate_images(
+            model="imagen-4.0-generate-001",
+            prompt=prompt,
+            reference_images=[subject_ref],
+            config=types.GenerateImagesConfig(
+                number_of_images=1,
+                aspect_ratio="3:4",
+                person_generation="ALLOW_ADULT",
             ),
         )
 
-        text = _clean_json_response(response.text)
-        prompts_list = json.loads(text)
+        if response.generated_images:
+            return response.generated_images[0].image.image_bytes
 
-        if isinstance(prompts_list, list) and len(prompts_list) >= 3:
-            return [
-                (str(prompts_list[0]), "front"),
-                (str(prompts_list[1]), "3quarter"),
-                (str(prompts_list[2]), "back"),
-            ]
-        print(f"[VSUpload] Vision prompt gen: expected 3 prompts, got {len(prompts_list) if isinstance(prompts_list, list) else type(prompts_list)}")
+        print("[VSUpload] Reference gen: Imagen returned no images")
         return None
 
-    except json.JSONDecodeError as e:
-        print(f"[VSUpload] Vision prompt gen: invalid JSON — {e}")
-        return None
     except Exception as e:
-        print(f"[VSUpload] Vision prompt gen: failed — {e}")
+        print(f"[VSUpload] Reference gen: exception — {e}")
         return None
 
 
-# ── 5. Image Generation — Imagen with Subject Reference ──────────
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  3. IMAGE GENERATION — Imagen 4 Text-Only (Fallback)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-def generate_image_with_reference(
-    prompt: str, image_bytes: bytes, api_key: str
-) -> Optional[bytes]:
+def build_fallback_prompts(metadata: Dict[str, Any]) -> List[Tuple[str, str]]:
     """
-    Generate an image using Imagen 4 via REST API, passing the original
-    garment photo as a Subject Reference so Imagen visually matches it.
-    Returns JPEG bytes or None on failure.
+    Build text-only prompts from metadata. Used ONLY when reference-based
+    generation fails completely. These are less accurate but better than nothing.
     """
-    try:
-        import requests
-        import base64
+    color = metadata.get("color", "")
+    style = metadata.get("style", "")
+    fabric = metadata.get("fabric", "Unknown")
+    desc = metadata.get("description", "")
 
-        url = (
-            "https://generativelanguage.googleapis.com/v1beta/models/"
-            f"imagen-4.0-generate-001:predict?key={api_key}"
+    garment_desc = f"a {color} {style} made of {fabric}. {desc}"
+
+    poses = [
+        ("front-facing, natural standing posture, garment fully visible", "front"),
+        ("elegant three-quarter angle, showing side profile and silhouette", "3quarter"),
+        ("back-facing, showing rear design and back details", "back"),
+    ]
+
+    prompts = []
+    for pose_desc, angle in poses:
+        prompt = (
+            f"Professional e-commerce catalog photo. Full-body shot of a fashion model "
+            f"with South Asian features wearing {garment_desc}. "
+            f"Pose: {pose_desc}. "
+            f"Clean white studio background. Soft professional lighting. "
+            f"Sharp focus, realistic fabric draping, photorealistic, 8K. "
+            f"No accessories, no text, no watermark."
         )
-        encoded_img = base64.b64encode(image_bytes).decode("utf-8")
+        prompts.append((prompt, angle))
 
-        payload = {
-            "instances": [{"prompt": prompt}],
-            "parameters": {
-                "sampleCount": 1,
-                "aspectRatio": "3:4",
-                "personGeneration": "ALLOW_ADULT",
-                "negativePrompt": "saree, sari, traditional wrap, messy, multiple people, ugly",
-                "referenceImages": [
-                    {
-                        "referenceType": "SUBJECT",
-                        "referenceImage": {
-                            "bytesBase64Encoded": encoded_img,
-                        },
-                    }
-                ],
-            },
-        }
+    return prompts
 
-        resp = requests.post(url, json=payload, timeout=120)
-        if resp.status_code == 200:
-            data = resp.json()
-            predictions = data.get("predictions", [])
-            if predictions:
-                b64_out = predictions[0].get("bytesBase64Encoded")
-                if b64_out:
-                    return base64.b64decode(b64_out)
-            print("[VSUpload] Reference image: API returned 200 but no image data")
-        else:
-            print(f"[VSUpload] Reference image: {resp.status_code} — {resp.text[:300]}")
-        return None
-
-    except Exception as e:
-        print(f"[VSUpload] Reference image: exception — {e}")
-        return None
-
-
-# ── 6. Image Generation — Imagen Text-to-Image Fallback ─────────
 
 def generate_single_image(prompt: str, api_key: str) -> Optional[bytes]:
     """
     Generate a single model photo using Imagen 4 (text-to-image, no reference).
     Falls back to a local PIL placeholder if Imagen is unavailable.
-    Returns JPEG image bytes or None on total failure.
     """
     try:
         from google import genai
@@ -444,18 +287,17 @@ def generate_single_image(prompt: str, api_key: str) -> Optional[bytes]:
                 number_of_images=1,
                 aspect_ratio="3:4",
                 person_generation="ALLOW_ADULT",
-                negative_prompt="saree, sari, traditional wrap, messy, multiple people, ugly",
             ),
         )
 
         if response.generated_images:
             return response.generated_images[0].image.image_bytes
 
-        print("[VSUpload] Imagen returned no images")
+        print("[VSUpload] Imagen text-only: returned no images")
         return None
 
     except Exception as e:
-        print(f"[VSUpload] Imagen failed: {e} — trying local placeholder")
+        print(f"[VSUpload] Imagen text-only: failed — {e}")
         try:
             from PIL import Image, ImageDraw
             import io
@@ -479,7 +321,9 @@ def generate_single_image(prompt: str, api_key: str) -> Optional[bytes]:
         return None
 
 
-# ── 7. Job Orchestrator ──────────────────────────────────────────
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  JOB ORCHESTRATOR
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def process_job(job_id: str, db) -> None:
     """
@@ -487,12 +331,13 @@ def process_job(job_id: str, db) -> None:
 
     Steps:
       1. Load raw photos from MongoDB
-      2. Select best representative photo (largest file → highest quality proxy)
-      3. Extract metadata via Gemini Vision (fallback: Groq text-only)
-      4. Generate 3 model images (advanced: vision + reference → fallback: text-to-image)
-      5. Store generated images in MongoDB `images` collection
-      6. Create product document in `vsupload_products`
-      7. Update job status → under_review
+      2. Select best representative photo (largest file)
+      3. Extract metadata via Gemini Vision (for product catalog)
+      4. Generate 3 model images:
+         PRIMARY:  Imagen 4 + SubjectReference (scene-only prompts)
+         FALLBACK: Imagen 4 text-to-image (metadata-based prompts)
+      5. Store generated images + product document
+      6. Update job status → under_review
     """
     try:
         # ── Mark job as processing ───────────────────────────────
@@ -538,21 +383,16 @@ def process_job(job_id: str, db) -> None:
 
         print(f"[VSUpload] Job {job_id}: Selected best photo ({best_size} bytes, {best_mime})")
 
-        # ── Step 3: Extract metadata ─────────────────────────────
+        # ── Step 3: Extract metadata (for catalog, NOT for image gen)
         metadata = analyze_garment_gemini(best_photo, best_mime)
-
-        if not metadata:
-            print(f"[VSUpload] Job {job_id}: Gemini failed, trying Groq fallback")
-            metadata = analyze_garment_groq(job.get("group_name", "clothing item"))
 
         if not metadata:
             _fail_job(
                 job_id, db, "metadata_extraction_failed",
-                "Both Gemini Vision and Groq failed to extract metadata",
+                "Gemini Vision failed to extract metadata",
             )
             return
 
-        # Save metadata to job document
         db.vsupload_jobs.update_one(
             {"job_id": job_id},
             {"$set": {"ai_metadata": metadata, "updated_at": datetime.utcnow()}},
@@ -566,23 +406,23 @@ def process_job(job_id: str, db) -> None:
 
         max_images = int(os.getenv("MAX_IMAGES_PER_JOB", "3"))
         generated_images = []
-        advanced_success = False
 
-        # ── Advanced Flow: Vision-generated prompts + reference image
-        print(f"[VSUpload] Job {job_id}: Attempting advanced Vision → Reference Image flow")
-        vision_prompts = generate_prompts_from_vision(best_photo, best_mime, gemini_key)
+        # ── PRIMARY: Reference-based (scene-only prompts + garment photo)
+        #    The text prompt says nothing about the garment.
+        #    The SubjectReferenceImage IS the garment.
+        print(f"[VSUpload] Job {job_id}: Generating with SubjectReference (reference-first)")
 
-        if vision_prompts:
-            vision_prompts = vision_prompts[:max_images]
-            for prompt_text, angle in vision_prompts:
-                print(f"[VSUpload] Job {job_id}: Advanced generating {angle}...")
+        scene_prompts = SCENE_PROMPTS[:max_images]
+        for prompt_text, angle in scene_prompts:
+            # Retry each angle up to 2 times
+            for attempt in range(2):
                 img_out = generate_image_with_reference(prompt_text, best_photo, gemini_key)
                 if img_out:
                     result = db.images.insert_one({
                         "filename": f"{job_id}_model_{angle}.jpg",
                         "content_type": "image/jpeg",
                         "data": img_out,
-                        "source": "vsupload_generated_advanced",
+                        "source": "vsupload_generated_reference",
                         "job_id": job_id,
                         "created_at": datetime.utcnow(),
                     })
@@ -591,37 +431,29 @@ def process_job(job_id: str, db) -> None:
                         "angle": angle,
                         "url": f"/api/images/{result.inserted_id}",
                     })
-                    print(f"[VSUpload] Job {job_id}: Advanced {angle} → {result.inserted_id}")
+                    print(f"[VSUpload] Job {job_id}: Reference {angle} → {result.inserted_id}")
+                    break
                 else:
-                    print(f"[VSUpload] Job {job_id}: Advanced {angle} failed")
+                    if attempt < 1:
+                        print(f"[VSUpload] Job {job_id}: Reference {angle} attempt {attempt+1} failed, retrying...")
+                        time.sleep(5)
 
-            if generated_images:
-                advanced_success = True
-                print(f"[VSUpload] Job {job_id}: Advanced flow succeeded — {len(generated_images)} images")
+        # ── FALLBACK: Text-to-image (only if reference produced nothing)
+        if not generated_images:
+            print(f"[VSUpload] Job {job_id}: Reference flow produced 0 images. Falling back to text-to-image.")
 
-        # ── Fallback Flow: metadata-based prompts, text-to-image only
-        if not advanced_success:
-            print(f"[VSUpload] Job {job_id}: Advanced flow failed. Falling back to text-to-image.")
-            generated_images = []
+            fallback_prompts = build_fallback_prompts(metadata)
+            fallback_prompts = fallback_prompts[:max_images]
 
-            try:
-                prompts = build_imagen_prompts(metadata)
-            except ValueError as e:
-                _fail_job(job_id, db, "image_gen_failed", str(e))
-                return
-
-            prompts = prompts[:max_images]
-
-            for prompt_text, angle in prompts:
+            for prompt_text, angle in fallback_prompts:
                 image_bytes_out = None
-
                 for attempt in range(3):
                     image_bytes_out = generate_single_image(prompt_text, gemini_key)
                     if image_bytes_out:
                         break
                     if attempt < 2:
                         wait = 10 * (attempt + 1)
-                        print(f"[VSUpload] Imagen {angle} attempt {attempt + 1} failed, retrying in {wait}s...")
+                        print(f"[VSUpload] Imagen {angle} attempt {attempt+1} failed, retrying in {wait}s...")
                         time.sleep(wait)
 
                 if image_bytes_out:
@@ -629,7 +461,7 @@ def process_job(job_id: str, db) -> None:
                         "filename": f"{job_id}_model_{angle}.jpg",
                         "content_type": "image/jpeg",
                         "data": image_bytes_out,
-                        "source": "vsupload_generated",
+                        "source": "vsupload_generated_fallback",
                         "job_id": job_id,
                         "created_at": datetime.utcnow(),
                     })
@@ -645,11 +477,11 @@ def process_job(job_id: str, db) -> None:
         if not generated_images:
             _fail_job(
                 job_id, db, "image_gen_failed",
-                "Failed to generate any model images via advanced or fallback methods",
+                "Failed to generate any model images",
             )
             return
 
-        # ── Step 5: Upsert product document (avoids duplicates on retry/regenerate)
+        # ── Step 5: Upsert product document ──────────────────────
         db.vsupload_products.update_one(
             {"job_id": job_id},
             {
@@ -708,7 +540,9 @@ def process_job(job_id: str, db) -> None:
         _fail_job(job_id, db, "unknown_error", str(e))
 
 
-# ── Helper: Mark job as failed ───────────────────────────────────
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  HELPERS — Job status management
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def _fail_job(job_id: str, db, error_code: str, error_message: str) -> None:
     """Mark a job as failed with error details."""
@@ -727,8 +561,6 @@ def _fail_job(job_id: str, db, error_code: str, error_message: str) -> None:
     _update_batch_counts(job_id, db)
     print(f"[VSUpload] Job {job_id} marked failed: [{error_code}] {error_message}")
 
-
-# ── Helper: Recalculate batch status counts ──────────────────────
 
 def _update_batch_counts(job_id: str, db) -> None:
     """Aggregate job statuses and update the parent batch document."""

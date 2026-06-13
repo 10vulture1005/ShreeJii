@@ -82,21 +82,10 @@ class TestMetadataExtraction(unittest.TestCase):
 
         print(f"\n✅ Gemini Vision result:\n{json.dumps(result, indent=2)}")
 
-    @unittest.skipIf(SKIP_GROQ, "GROQ_API_KEY not set — skipping Groq fallback test")
+    @unittest.skip("Groq fallback removed from pipeline — Gemini Vision only")
     def test_groq_fallback_extraction(self):
-        """Groq should generate metadata from a group name (text-only, no vision)."""
-        from app.vsupload_pipeline import analyze_garment_groq
-
-        result = analyze_garment_groq("Elegant Red Silk Saree")
-
-        self.assertIsNotNone(result, "Groq fallback returned None — check API key")
-        self.assertIsInstance(result, dict)
-
-        required_fields = ["name", "description", "color"]
-        for field in required_fields:
-            self.assertIn(field, result, f"Missing field: {field}")
-
-        print(f"\n✅ Groq fallback result:\n{json.dumps(result, indent=2)}")
+        """Groq fallback is no longer used in the pipeline."""
+        pass
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -108,7 +97,7 @@ class TestPromptConstruction(unittest.TestCase):
 
     def test_build_prompts(self):
         """Should produce 3 prompts for front, 3quarter, and back angles."""
-        from app.vsupload_pipeline import build_imagen_prompts
+        from app.vsupload_pipeline import build_fallback_prompts
 
         metadata = {
             "name": "Ivory Bloom Wrap Dress",
@@ -122,7 +111,7 @@ class TestPromptConstruction(unittest.TestCase):
             "length": "Midi",
         }
 
-        prompts = build_imagen_prompts(metadata)
+        prompts = build_fallback_prompts(metadata)
 
         self.assertEqual(len(prompts), 3, "Should produce exactly 3 prompts")
 
@@ -134,7 +123,6 @@ class TestPromptConstruction(unittest.TestCase):
         for prompt_text, angle in prompts:
             self.assertIn("Ivory", prompt_text)
             self.assertIn("Chiffon", prompt_text)
-            self.assertIn("fashion", prompt_text.lower())
             self.assertTrue(len(prompt_text) > 50, f"Prompt too short for {angle}")
 
         print(f"\n✅ Generated 3 prompts:")
@@ -187,7 +175,7 @@ class TestEndToEnd(unittest.TestCase):
         """Run the full pipeline: photo → metadata → images → store."""
         from app.vsupload_pipeline import (
             analyze_garment_gemini,
-            build_imagen_prompts,
+            build_fallback_prompts,
             generate_single_image,
         )
 
@@ -199,15 +187,11 @@ class TestEndToEnd(unittest.TestCase):
 
         # Step 2: Extract metadata
         metadata = analyze_garment_gemini(image_bytes, "image/jpeg")
-        if not metadata:
-            print("  ! Gemini failed, falling back to Groq")
-            from app.vsupload_pipeline import analyze_garment_groq
-            metadata = analyze_garment_groq("Test Product")
-        self.assertIsNotNone(metadata, "Metadata extraction failed for both Gemini and Groq")
+        self.assertIsNotNone(metadata, "Metadata extraction failed")
         print(f"  ✓ Metadata extracted: {metadata.get('name', 'unknown')}")
 
-        # Step 3: Build prompts
-        prompts = build_imagen_prompts(metadata)
+        # Step 3: Build fallback prompts
+        prompts = build_fallback_prompts(metadata)
         self.assertEqual(len(prompts), 3)
         print(f"  ✓ {len(prompts)} prompts built")
 
