@@ -18,3 +18,14 @@ export interface CartItem {
   product: Product
   quantity: number
 }
+
+export interface Address {
+  id: string
+  full_name: string
+  phone: string
+  address_line1: string
+  address_line2?: string
+  city: string
+  state: string
+  pincode: string
+}

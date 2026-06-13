@@ -13,3 +13,4 @@ passlib[bcrypt]>=1.7.4
 PyJWT>=2.8.0
 groq>=0.4.0
 razorpay>=1.4.0
+google-genai>=1.0.0

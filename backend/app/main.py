@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.router import router
+from app.vsupload_router import vsupload_router
 from app.database import db
 from app.auth_utils import get_password_hash
 
@@ -47,6 +48,7 @@ app.add_middleware(
 
 # ── Include API routes ───────────────────────────────────────────
 app.include_router(router)
+app.include_router(vsupload_router)
 
 
 @app.get("/", tags=["Health"])

@@ -65,7 +65,7 @@ export default function CollectionsPage() {
     if (selectedPriceRange !== "all") {
       const range = priceRanges.find((r) => r.id === selectedPriceRange)
       if (range && "min" in range && "max" in range) {
-        priceMatch = product.price >= range.min && product.price <= range.max
+        priceMatch = product.price >= range.min! && product.price <= range.max!
       }
     }
 

@@ -30,6 +30,7 @@ from app.schemas import (
     UserCreate, UserOut, Token, DashboardStats,
     CreateOrderRequest, CreateOrderResponse,
     VerifyPaymentRequest, VerifyPaymentResponse,
+    AddressCreate, AddressOut,
 )
 from app.sku_utils import generate_sku
 from app.auth_utils import verify_password, get_password_hash, create_access_token
@@ -79,6 +80,77 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Database = Depen
 @router.get("/api/auth/me", response_model=UserOut, tags=["Auth"])
 def read_users_me(current_user: dict = Depends(get_current_user)):
     return current_user
+
+
+# ── 0b. Address Management ───────────────────────────────────────
+
+@router.post(
+    "/api/user/address",
+    response_model=AddressOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="Add a new delivery address",
+    tags=["User"],
+)
+def add_address(
+    payload: AddressCreate,
+    current_user: dict = Depends(get_current_user),
+    db: Database = Depends(get_db),
+):
+    """
+    Save a new delivery address for the authenticated user.
+    The address document is linked to the user via their ObjectId.
+    """
+    address_doc = {
+        "user_id": ObjectId(current_user["id"]),
+        "full_name": payload.full_name,
+        "phone": payload.phone,
+        "address_line1": payload.address_line1,
+        "address_line2": payload.address_line2,
+        "city": payload.city,
+        "state": payload.state,
+        "pincode": payload.pincode,
+        "created_at": datetime.utcnow(),
+    }
+    result = db.addresses.insert_one(address_doc)
+    return AddressOut(
+        id=str(result.inserted_id),
+        full_name=payload.full_name,
+        phone=payload.phone,
+        address_line1=payload.address_line1,
+        address_line2=payload.address_line2,
+        city=payload.city,
+        state=payload.state,
+        pincode=payload.pincode,
+    )
+
+
+@router.get(
+    "/api/user/address",
+    response_model=list[AddressOut],
+    summary="Get all saved delivery addresses",
+    tags=["User"],
+)
+def get_addresses(
+    current_user: dict = Depends(get_current_user),
+    db: Database = Depends(get_db),
+):
+    """
+    Fetch all saved delivery addresses for the authenticated user.
+    """
+    addresses = db.addresses.find({"user_id": ObjectId(current_user["id"])})
+    return [
+        AddressOut(
+            id=str(addr["_id"]),
+            full_name=addr["full_name"],
+            phone=addr["phone"],
+            address_line1=addr["address_line1"],
+            address_line2=addr.get("address_line2"),
+            city=addr["city"],
+            state=addr["state"],
+            pincode=addr["pincode"],
+        )
+        for addr in addresses
+    ]
 
 
 # ── 1. Inwarding & Restocking ───────────────────────────────────
@@ -562,18 +634,42 @@ def get_admin_stats(db: Database = Depends(get_db), admin_user: dict = Depends(g
     summary="Create a Razorpay order for web checkout",
     tags=["Payment"],
 )
-def create_razorpay_order(payload: CreateOrderRequest, db: Database = Depends(get_db)):
+def create_razorpay_order(
+    payload: CreateOrderRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Database = Depends(get_db),
+):
     """
     Step 1 of the web payment flow:
+    - Verifies the user has a valid saved delivery address
     - Validates stock availability for every item
     - Calculates total amount (items + delivery charge)
     - Creates a Razorpay order via their API
-    - Stores the order in the `orders` collection for later verification
+    - Stores the order in the `orders` collection with user_id and address_id
     """
     if not RAZORPAY_KEY_ID or not RAZORPAY_KEY_SECRET:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Razorpay is not configured. Please set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET.",
+        )
+
+    # ── Verify address belongs to user ──────────────────────────
+    try:
+        address_oid = ObjectId(payload.address_id)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid address ID format.",
+        )
+
+    address = db.addresses.find_one({
+        "_id": address_oid,
+        "user_id": ObjectId(current_user["id"]),
+    })
+    if not address:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No valid delivery address found. Please add a delivery address before placing an order.",
         )
 
     collection = db.products
@@ -613,9 +709,11 @@ def create_razorpay_order(payload: CreateOrderRequest, db: Database = Depends(ge
             detail=f"Failed to create Razorpay order: {str(e)}",
         )
 
-    # Store order in MongoDB for verification later
+    # Store order in MongoDB with user and address linkage
     order_doc = {
         "razorpay_order_id": razorpay_order["id"],
+        "user_id": ObjectId(current_user["id"]),
+        "address_id": address_oid,
         "items": [
             {
                 "sku_id": item.sku_id,

@@ -23,6 +23,46 @@ class Token(BaseModel):
     access_token: str
     token_type: str
 
+# ── Address Management ───────────────────────────────────────────
+
+class AddressCreate(BaseModel):
+    """Payload for POST /api/user/address"""
+    full_name: str = Field(..., min_length=1, examples=["Vaidik Shah"])
+    phone: str = Field(..., min_length=10, max_length=15, examples=["9876543210"])
+    address_line1: str = Field(..., min_length=1, examples=["123 MG Road"])
+    address_line2: Optional[str] = Field(None, examples=["Near City Mall"])
+    city: str = Field(..., min_length=1, examples=["Surat"])
+    state: str = Field(..., min_length=1, examples=["Gujarat"])
+    pincode: str = Field(..., min_length=6, max_length=6, examples=["395007"])
+
+class AddressOut(BaseModel):
+    """Response model for a saved delivery address."""
+    id: str
+    full_name: str
+    phone: str
+    address_line1: str
+    address_line2: Optional[str] = None
+    city: str
+    state: str
+    pincode: str
+
+# ── Order Details ────────────────────────────────────────────────
+
+class OrderOut(BaseModel):
+    """Full order details including linked user, address, and items."""
+    id: str
+    user_id: str
+    address_id: str
+    razorpay_order_id: str
+    items: list[dict]
+    delivery_charge: Decimal
+    amount_paise: int
+    currency: str = "INR"
+    status: str
+    source: str = "web"
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
 # ── Admin Dashboard ──────────────────────────────────────────────
 
 class DashboardStats(BaseModel):
@@ -136,6 +176,7 @@ class CreateOrderRequest(BaseModel):
     """Payload for POST /api/payment/create-order"""
     items: list[OrderItem]
     delivery_charge: Decimal = Field(default=0, ge=0)
+    address_id: str = Field(..., min_length=1, description="ID of the saved delivery address")
 
 
 class CreateOrderResponse(BaseModel):

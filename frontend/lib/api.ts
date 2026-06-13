@@ -1,4 +1,4 @@
-import type { Product } from "./types"
+import type { Product, Address } from "./types"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
 
@@ -39,6 +39,37 @@ export const api = {
     if (!res.ok) throw new Error("Failed to fetch user")
     return res.json()
   },
+
+  // ── Address Management ──────────────────────────────────────────
+
+  getAddresses: async (token: string): Promise<Address[]> => {
+    const res = await fetch(`${API_URL}/api/user/address`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({}))
+      throw new Error(errorData.detail || "Failed to fetch addresses")
+    }
+    return res.json()
+  },
+
+  addAddress: async (token: string, data: Omit<Address, "id">): Promise<Address> => {
+    const res = await fetch(`${API_URL}/api/user/address`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(data),
+    })
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({}))
+      throw new Error(errorData.detail || "Failed to save address")
+    }
+    return res.json()
+  },
+
+  // ── Checkout ────────────────────────────────────────────────────
   
   bulkCheckout: async (items: { sku_id: string; quantity_purchased: number }[]) => {
     const res = await fetch(`${API_URL}/api/checkout/bulk`, {
@@ -50,6 +81,8 @@ export const api = {
     return res.json()
   },
   
+  // ── Admin ───────────────────────────────────────────────────────
+
   getAdminStats: async (token: string) => {
     const res = await fetch(`${API_URL}/api/admin/stats`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -104,11 +137,25 @@ export const api = {
     return res.json()
   },
 
-  createRazorpayOrder: async (items: { sku_id: string; quantity: number; price: number }[], deliveryCharge: number) => {
+  // ── Payment (Razorpay) ─────────────────────────────────────────
+
+  createRazorpayOrder: async (
+    token: string,
+    items: { sku_id: string; quantity: number; price: number }[],
+    deliveryCharge: number,
+    addressId: string,
+  ) => {
     const res = await fetch(`${API_URL}/api/payment/create-order`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ items, delivery_charge: deliveryCharge }),
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        items,
+        delivery_charge: deliveryCharge,
+        address_id: addressId,
+      }),
     })
     if (!res.ok) {
       const errorData = await res.json().catch(() => ({}))
@@ -128,10 +175,20 @@ export const api = {
     return res.json()
   },
 
-  verifyPayment: async (data: { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string }) => {
+  verifyPayment: async (
+    token: string,
+    data: {
+      razorpay_order_id: string
+      razorpay_payment_id: string
+      razorpay_signature: string
+    },
+  ) => {
     const res = await fetch(`${API_URL}/api/payment/verify`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
       body: JSON.stringify(data),
     })
     if (!res.ok) {
