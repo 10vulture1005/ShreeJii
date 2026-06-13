@@ -345,11 +345,11 @@ def get_all_products(db: Database = Depends(get_db), admin_user: dict = Depends(
     return [
         ProductOut(
             sku_id=row["sku_id"],
-            name=row["name"],
-            source_name=row["source_name"],
-            clothing_type=row["clothing_type"],
-            color=row["color"],
-            price=row["price"],
+            name=row.get("name") or "Untitled Product",
+            source_name=row.get("source_name") or "VSUpload AI",
+            clothing_type=row.get("clothing_type") or "Ethnic Wear",
+            color=row.get("color") or "Multicolor",
+            price=row.get("price") or 0.0,
             image_url=row.get("image_url"),
             image_urls=row.get("image_urls", []),
             qr_image_url=row.get("qr_image_url"),
@@ -378,11 +378,11 @@ def get_products(db: Database = Depends(get_db)):
         return [
             ProductOut(
                 sku_id=row["sku_id"],
-                name=row["name"],
-                source_name=row["source_name"],
-                clothing_type=row["clothing_type"],
-                color=row["color"],
-                price=row["price"],
+                name=row.get("name") or "Untitled Product",
+                source_name=row.get("source_name") or "VSUpload AI",
+                clothing_type=row.get("clothing_type") or "Ethnic Wear",
+                color=row.get("color") or "Multicolor",
+                price=row.get("price") or 0.0,
                 image_url=row.get("image_url"),
                 image_urls=row.get("image_urls", []),
                 qr_image_url=row.get("qr_image_url"),
