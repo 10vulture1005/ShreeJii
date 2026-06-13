@@ -40,6 +40,52 @@ export const api = {
     return res.json()
   },
 
+  // ── Cart Synchronization ────────────────────────────────────────
+
+  getUserCart: async (token: string) => {
+    const res = await fetch(`${API_URL}/api/user/cart`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!res.ok) throw new Error("Failed to fetch cart")
+    return res.json()
+  },
+
+  saveUserCart: async (token: string, cart: any[]) => {
+    const res = await fetch(`${API_URL}/api/user/cart`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ cart }),
+    })
+    if (!res.ok) throw new Error("Failed to save cart")
+    return res.json()
+  },
+
+  // ── Wishlist Synchronization ──────────────────────────────────────
+
+  getUserWishlist: async (token: string) => {
+    const res = await fetch(`${API_URL}/api/user/wishlist`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!res.ok) throw new Error("Failed to fetch wishlist")
+    return res.json()
+  },
+
+  saveUserWishlist: async (token: string, wishlist: string[]) => {
+    const res = await fetch(`${API_URL}/api/user/wishlist`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ wishlist }),
+    })
+    if (!res.ok) throw new Error("Failed to save wishlist")
+    return res.json()
+  },
+
   // ── Address Management ──────────────────────────────────────────
 
   getAddresses: async (token: string): Promise<Address[]> => {

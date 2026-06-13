@@ -143,6 +143,34 @@ class CheckoutResponse(BaseModel):
     message: str
 
 
+# ── Cart Sync Endpoint ───────────────────────────────────────────
+
+class CartItemSchema(BaseModel):
+    product: ProductOut
+    quantity: int = Field(..., gt=0)
+
+class CartSyncRequest(BaseModel):
+    """Payload to save the cart state"""
+    cart: list[CartItemSchema]
+
+class CartSyncResponse(BaseModel):
+    """Response returning the saved/retrieved cart"""
+    cart: list[CartItemSchema]
+    message: str
+
+
+# ── Wishlist Sync Endpoint ───────────────────────────────────────
+
+class WishlistSyncRequest(BaseModel):
+    """Payload to save the wishlist state"""
+    wishlist: list[str]
+
+class WishlistSyncResponse(BaseModel):
+    """Response returning the saved/retrieved wishlist"""
+    wishlist: list[str]
+    message: str
+
+
 class BulkCheckoutResponse(BaseModel):
     """Response after a bulk checkout operation."""
     

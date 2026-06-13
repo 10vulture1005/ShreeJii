@@ -31,6 +31,8 @@ from app.schemas import (
     CreateOrderRequest, CreateOrderResponse,
     VerifyPaymentRequest, VerifyPaymentResponse,
     AddressCreate, AddressOut,
+    CartSyncRequest, CartSyncResponse,
+    WishlistSyncRequest, WishlistSyncResponse,
 )
 from app.sku_utils import generate_sku
 from app.auth_utils import verify_password, get_password_hash, create_access_token
@@ -151,6 +153,93 @@ def get_addresses(
         )
         for addr in addresses
     ]
+
+
+# ── 0c. Cart Synchronization ───────────────────────────────────────
+
+@router.get(
+    "/api/user/cart",
+    response_model=CartSyncResponse,
+    summary="Get user cart",
+    tags=["User"],
+)
+def get_user_cart(
+    current_user: dict = Depends(get_current_user),
+    db: Database = Depends(get_db),
+):
+    """
+    Fetch the saved cart for the authenticated user.
+    """
+    user_doc = db.users.find_one({"_id": ObjectId(current_user["id"])})
+    cart_data = user_doc.get("cart", []) if user_doc else []
+    return CartSyncResponse(cart=cart_data, message="Cart fetched successfully")
+
+
+@router.put(
+    "/api/user/cart",
+    response_model=CartSyncResponse,
+    summary="Save user cart",
+    tags=["User"],
+)
+def save_user_cart(
+    payload: CartSyncRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Database = Depends(get_db),
+):
+    """
+    Update the saved cart for the authenticated user.
+    """
+    # We store the cart directly on the user document
+    cart_data = [item.model_dump() for item in payload.cart]
+    
+    db.users.update_one(
+        {"_id": ObjectId(current_user["id"])},
+        {"$set": {"cart": cart_data}}
+    )
+    
+    return CartSyncResponse(cart=payload.cart, message="Cart saved successfully")
+
+
+# ── 0d. Wishlist Synchronization ───────────────────────────────────
+
+@router.get(
+    "/api/user/wishlist",
+    response_model=WishlistSyncResponse,
+    summary="Get user wishlist",
+    tags=["User"],
+)
+def get_user_wishlist(
+    current_user: dict = Depends(get_current_user),
+    db: Database = Depends(get_db),
+):
+    """
+    Fetch the saved wishlist for the authenticated user.
+    """
+    user_doc = db.users.find_one({"_id": ObjectId(current_user["id"])})
+    wishlist_data = user_doc.get("wishlist", []) if user_doc else []
+    return WishlistSyncResponse(wishlist=wishlist_data, message="Wishlist fetched successfully")
+
+
+@router.put(
+    "/api/user/wishlist",
+    response_model=WishlistSyncResponse,
+    summary="Save user wishlist",
+    tags=["User"],
+)
+def save_user_wishlist(
+    payload: WishlistSyncRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Database = Depends(get_db),
+):
+    """
+    Update the saved wishlist for the authenticated user.
+    """
+    db.users.update_one(
+        {"_id": ObjectId(current_user["id"])},
+        {"$set": {"wishlist": payload.wishlist}}
+    )
+    
+    return WishlistSyncResponse(wishlist=payload.wishlist, message="Wishlist saved successfully")
 
 
 # ── 1. Inwarding & Restocking ───────────────────────────────────

@@ -3,6 +3,8 @@
 import type React from "react"
 import { createContext, useContext, useState, useEffect } from "react"
 import type { CartItem, Product } from "@/lib/types"
+import { useAuth } from "./auth-context"
+import { api } from "@/lib/api"
 
 interface CartContextType {
   cart: CartItem[]
@@ -18,19 +20,55 @@ const CartContext = createContext<CartContextType | undefined>(undefined)
 
 export function CartProvider({ children }: { children: React.ReactNode }) {
   const [cart, setCart] = useState<CartItem[]>([])
+  const { token } = useAuth()
+  const [isInitialized, setIsInitialized] = useState(false)
 
   // Load cart from localStorage on mount
   useEffect(() => {
     const savedCart = localStorage.getItem("shreeji-cart")
     if (savedCart) {
-      setCart(JSON.parse(savedCart))
+      try {
+        setCart(JSON.parse(savedCart))
+      } catch (e) {
+        console.error("Failed to parse local cart", e)
+      }
     }
+    setIsInitialized(true)
   }, [])
 
-  // Save cart to localStorage whenever it changes
+  // Sync with backend when token becomes available
   useEffect(() => {
-    localStorage.setItem("shreeji-cart", JSON.stringify(cart))
-  }, [cart])
+    if (token && isInitialized) {
+      api.getUserCart(token).then((res) => {
+        if (res.cart) {
+          setCart((prevCart) => {
+            if (prevCart.length === 0) return res.cart
+            
+            // Merge logic: keep local cart items, add missing backend items
+            const merged = [...prevCart]
+            let changed = false
+            for (const bItem of res.cart) {
+              if (!merged.find(i => i.product.sku_id === bItem.product.sku_id)) {
+                merged.push(bItem)
+                changed = true
+              }
+            }
+            return changed ? merged : prevCart
+          })
+        }
+      }).catch(console.error)
+    }
+  }, [token, isInitialized])
+
+  // Save cart to localStorage AND backend whenever it changes
+  useEffect(() => {
+    if (isInitialized) {
+      localStorage.setItem("shreeji-cart", JSON.stringify(cart))
+      if (token) {
+        api.saveUserCart(token, cart).catch(console.error)
+      }
+    }
+  }, [cart, token, isInitialized])
 
   const addToCart = (product: Product): boolean => {
     let success = false
