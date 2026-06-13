@@ -492,12 +492,7 @@ def publish_product(
         missing.append("price")
     if doc.get("stock_count") is None or doc["stock_count"] <= 0:
         missing.append("stock_count")
-    if not doc.get("sizes"):
-        missing.append("sizes")
-    if not doc.get("category"):
-        missing.append("category")
-    if not doc.get("sku"):
-        missing.append("sku")
+    # Make sizes, category, and sku optional / auto-generated
     if not doc.get("image_ids"):
         missing.append("images")
 
@@ -507,15 +502,21 @@ def publish_product(
             detail={"error": "Missing required fields", "missing": missing},
         )
 
-    # Check SKU uniqueness
+    # Check SKU uniqueness if provided, else auto-generate
+    sku = doc.get("sku")
+    if not sku:
+        import uuid
+        sku = f"VS-{str(uuid.uuid4())[:8].upper()}"
+        doc["sku"] = sku
+        
     existing_sku = db.vsupload_products.find_one({
-        "sku": doc["sku"],
+        "sku": sku,
         "_id": {"$ne": oid},
     })
     if existing_sku:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"SKU '{doc['sku']}' is already in use by another product.",
+            detail=f"SKU '{sku}' is already in use by another product.",
         )
 
     # Publish
@@ -573,7 +574,7 @@ def publish_product(
             "$set": {
                 "name": doc.get("title"),
                 "source_name": "VSUpload AI",
-                "clothing_type": doc.get("category"),
+                "clothing_type": doc.get("category", "Ethnic Wear"),
                 "color": doc.get("color", "Multicolor"),
                 "price": float(doc.get("price", 0)),
                 "image_url": primary_image_url,
