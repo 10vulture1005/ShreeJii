@@ -572,17 +572,17 @@ def publish_product(
         {"sku_id": sku_id},
         {
             "$set": {
-                "name": doc.get("title"),
+                "name": doc.get("title") or "Untitled Product",
                 "source_name": "VSUpload AI",
-                "clothing_type": doc.get("category", "Ethnic Wear"),
-                "color": doc.get("color", "Multicolor"),
-                "price": float(doc.get("price", 0)),
+                "clothing_type": doc.get("category") or "Ethnic Wear",
+                "color": doc.get("color") or "Multicolor",
+                "price": float(doc.get("price") or 0.0),
                 "image_url": primary_image_url,
                 "image_urls": image_urls,
                 "qr_image_url": qr_image_url,
-                "description": doc.get("description"),
+                "description": doc.get("description") or "",
             },
-            "$inc": {"stock_count": doc.get("stock_count", 0)}
+            "$inc": {"stock_count": doc.get("stock_count") or 0}
         },
         upsert=True,
         return_document=ReturnDocument.AFTER
