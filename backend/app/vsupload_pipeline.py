@@ -152,7 +152,7 @@ def analyze_garment_gemini(
     for attempt in range(1, max_retries + 1):
         try:
             response = client.models.generate_content(
-                model="gemini-2.0-flash",
+                model="gemini-3.5-flash",
                 contents=[
                     types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
                     types.Part.from_text(text=METADATA_PROMPT),
