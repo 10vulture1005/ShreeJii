@@ -5,10 +5,12 @@ import { ShoppingBag, Menu, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useCart } from "@/contexts/cart-context"
 import { useAuth } from "@/contexts/auth-context"
+import { useWishlist } from "@/contexts/wishlist-context"
 import { useState } from "react"
 
 export function Header() {
-  const { getCartCount } = useCart()
+  const { getCartCount, clearCart } = useCart()
+  const { clearWishlist } = useWishlist()
   const { user, logout } = useAuth()
   const cartCount = getCartCount()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
@@ -39,7 +41,11 @@ export function Header() {
 
         <div className="flex items-center gap-4">
           {user ? (
-            <Button variant="ghost" className="hidden md:inline-flex text-sm" onClick={() => logout()}>
+            <Button variant="ghost" className="hidden md:inline-flex text-sm" onClick={() => {
+              clearCart()
+              clearWishlist()
+              logout()
+            }}>
               Logout
             </Button>
           ) : (
@@ -107,6 +113,8 @@ export function Header() {
               <button
                 className="text-sm text-left text-foreground hover:text-primary transition-colors"
                 onClick={() => {
+                  clearCart()
+                  clearWishlist()
                   logout()
                   setMobileMenuOpen(false)
                 }}
