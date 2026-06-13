@@ -169,17 +169,18 @@ def build_imagen_prompts(metadata: Dict[str, Any]) -> List[Tuple[str, str]]:
     neckline = metadata.get("neckline", "")
     sleeve = metadata.get("sleeve", "")
 
-    # Extract first sentence of description for context
+    # Use the full detailed description to ensure the exact clothing is generated
     desc = metadata.get("description", "")
-    first_sentence = desc.split(".")[0].strip() + "." if desc else ""
 
     base = (
-        f"Fashion editorial photograph of a beautiful Indian model wearing a {color} {fabric} "
+        f"Fashion editorial photograph of a beautiful Indian model wearing the EXACT described {color} {fabric} "
         f"{style} {length} outfit with {neckline} neckline and {sleeve} sleeves. "
-        f"{first_sentence} "
+        f"Garment Details: {desc} "
+        f"CRITICAL: The generated image MUST feature the identical clothing design, embroidery, patterns, and fabric drape as described. "
         f"Indian ethnic fashion photography for e-commerce, studio lighting, clean white background, "
-        f"professional Vogue India editorial style, high resolution, 8k. "
-        f"Model has Indian skin tone and features, elegant pose showcasing the garment drape and details."
+        f"professional Vogue India editorial style. "
+        f"Model has Indian skin tone and features, elegant pose. "
+        f"Extremely high resolution, 8k, ultra-detailed, photorealistic, sharp focus."
     )
 
     return [
