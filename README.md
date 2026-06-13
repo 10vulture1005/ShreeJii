@@ -17,12 +17,12 @@ flowchart TD
     
     %% Advanced Image Generation Flow
     SaveMeta --> AdvPrompts[Gemini Vision: Generate 3 Detailed Prompts]
-    AdvPrompts --> AdvImagen[Gemini 3 Pro Image REST API + Subject Reference Image]
+    AdvPrompts --> AdvImagen[Imagen 4 REST API + Subject Reference Image]
     AdvImagen -- Success --> StoreImages[("Store Images in MongoDB")]
     
     %% Fallback Image Generation Flow
     AdvImagen -- Fails/API Error --> FallbackPrompts[Build Hardcoded Prompts from Metadata]
-    FallbackPrompts --> FallbackImagen[Gemini 3 Pro Image API]
+    FallbackPrompts --> FallbackImagen[Imagen 4 API]
     FallbackImagen -- Success --> StoreImages
     FallbackImagen -- Fails --> LocalFallback[Generate Local Placeholder image]
     LocalFallback --> StoreImages
@@ -56,6 +56,6 @@ flowchart TD
 2. **Metadata Extraction**: Gemini Vision acts as a fashion cataloguing expert to extract structured data (`name`, `description`, `color`, `style`, `fabric`, etc.). A text-only Groq fallback is used if Gemini is unavailable.
 3. **Advanced Image Generation**: 
    - Gemini Vision analyzes the photo again to write 3 extremely detailed, photorealistic prompts (front, 3-quarter, and back views).
-   - These prompts, along with the original photo (as a `SubjectReference`), are sent to the Gemini 3 Pro Image Developer API to generate high-accuracy model catalog photos.
-4. **Fallback Generation**: If the advanced reference image flow is restricted or fails, the pipeline falls back to generating standard prompts from the metadata and using Gemini 3 Pro Image in text-to-image mode.
+   - These prompts, along with the original photo (as a `SubjectReference`), are sent to the Imagen 4 Developer API to generate high-accuracy model catalog photos.
+4. **Fallback Generation**: If the advanced reference image flow is restricted or fails, the pipeline falls back to generating standard prompts from the metadata and using Imagen 4 in text-to-image mode.
 5. **Database Storage**: The generated model images and the extracted metadata are compiled into a product record and placed in an `under_review` state for the admin to approve.

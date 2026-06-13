@@ -278,7 +278,7 @@ def generate_image_with_reference_rest(prompt: str, image_bytes: bytes, api_key:
         import requests
         import base64
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-image:predict?key={api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key={api_key}"
         encoded_img = base64.b64encode(image_bytes).decode('utf-8')
         
         payload = {
@@ -325,7 +325,7 @@ def generate_single_image(prompt: str, api_key: str) -> Optional[bytes]:
         client = genai.Client(api_key=api_key)
 
         response = client.models.generate_images(
-            model="gemini-3-pro-image",
+            model="imagen-4.0-generate-001",
             prompt=prompt,
             config=types.GenerateImagesConfig(
                 number_of_images=1,
