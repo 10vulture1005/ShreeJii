@@ -172,14 +172,19 @@ def build_imagen_prompts(metadata: Dict[str, Any]) -> List[Tuple[str, str]]:
     # Use the full detailed description to ensure the exact clothing is generated
     desc = metadata.get("description", "")
 
-    base = (
+    # Common garment properties to inject
+    garment_details = (
+        f"Garment Description: {desc}\n"
+        f"Specifics: color ({color}), fabric texture ({fabric}), style ({style}), length ({length}), sleeves ({sleeve}), neckline ({neckline})."
+    )
+
+    prompt_front = (
         f"Use the described clothing as the exact garment reference. Preserve the garment exactly as described, "
-        f"including color ({color}), fabric texture ({fabric}), style ({style}), length ({length}), sleeves ({sleeve}), "
-        f"neckline ({neckline}), embroidery, prints, patterns, stitching, fit, and all design details. "
-        f"Garment Description: {desc} "
-        f"Do not modify, redesign, embellish, or change any aspect of the clothing. "
+        f"including embroidery, prints, patterns, stitching, fit, and all design details. Do not modify, redesign, embellish, or change any aspect of the clothing. "
+        f"{garment_details} "
         f"Place the garment on a professional female Indian fashion model with realistic body proportions and Indian skin tone. "
         f"Create a premium e-commerce product photograph for a luxury women's fashion boutique website. "
+        f"POSE: Full-body shot, front-facing pose, natural posture, garment clearly visible from top to bottom. "
         f"Clean light-neutral background, soft professional studio lighting, sharp focus, accurate color reproduction, "
         f"realistic fabric draping, highly detailed texture visibility, commercial catalog photography, "
         f"photorealistic, ultra-realistic, high resolution, 8K quality. "
@@ -187,10 +192,36 @@ def build_imagen_prompts(metadata: Dict[str, Any]) -> List[Tuple[str, str]]:
         f"no dramatic poses, no cluttered background, no text, no watermark, no logo, no cropped garment, no artistic filters."
     )
 
+    prompt_3quarter = (
+        f"Use the described clothing as the exact garment reference. Replicate the garment flawlessly, "
+        f"maintaining all embroidery, prints, patterns, stitching, and fit without any modifications. "
+        f"{garment_details} "
+        f"The outfit is worn by a professional female Indian fashion model with realistic body proportions and Indian skin tone. "
+        f"This is a high-end luxury e-commerce catalog photo. "
+        f"POSE: Full-body shot, elegant three-quarter angle pose. The model is turned slightly to show the side profile, silhouette, and the beautiful drape of the fabric. "
+        f"The background is a clean light-neutral studio backdrop with soft professional lighting. "
+        f"Sharp focus, accurate color reproduction, highly detailed texture visibility, photorealistic, ultra-realistic, high resolution, 8K quality. "
+        f"Keep the clothing as the absolute primary focus. Ensure there are no distracting accessories, no excessive jewelry, "
+        f"no dramatic poses, no cluttered background, no text, no watermark, no logo, no cropped garment, no artistic filters."
+    )
+
+    prompt_back = (
+        f"Use the described clothing as the exact garment reference. The garment must be preserved exactly as shown and described, "
+        f"including embroidery, prints, patterns, stitching, and design details. Do not alter or embellish the clothing. "
+        f"{garment_details} "
+        f"The outfit is worn by a professional female Indian fashion model with realistic body proportions and Indian skin tone. "
+        f"This is a premium commercial product photograph for a women's fashion website. "
+        f"POSE: Full-body shot, back-facing pose. The model is turned away from the camera to showcase the back design, rear neckline, and the back drape or pallu of the garment. "
+        f"Shot against a clean light-neutral background with soft professional studio lighting. "
+        f"Sharp focus, realistic fabric draping, accurate color reproduction, photorealistic, ultra-realistic, high resolution, 8K quality. "
+        f"The garment is the primary focus. No distracting accessories, no excessive jewelry, no dramatic poses, "
+        f"no cluttered background, no text, no watermark, no logo, no cropped garment, no artistic filters."
+    )
+
     return [
-        (f"{base} Full-body shot, front-facing pose, natural posture, garment clearly visible from top to bottom.", "front"),
-        (f"{base} Full-body shot, three-quarter angle pose, natural posture, showing the side profile and drape.", "3quarter"),
-        (f"{base} Full-body shot, back-facing pose, showing the back design and rear drape of the garment.", "back"),
+        (prompt_front, "front"),
+        (prompt_3quarter, "3quarter"),
+        (prompt_back, "back"),
     ]
 
 
